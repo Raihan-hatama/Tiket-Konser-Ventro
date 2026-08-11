@@ -1,6 +1,6 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_BASE_URL } from '@/config';
+import { API_BASE_URL } from '../config';
 
 export const TOKEN_KEY = 'tiket_konser_token';
 
