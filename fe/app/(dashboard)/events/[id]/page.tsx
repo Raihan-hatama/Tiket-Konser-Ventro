@@ -1,0 +1,225 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+
+import EventForm from "@/components/forms/EventForm";
+
+import {
+  getEvent,
+  updateEvent,
+} from "@/services/event";
+
+export default function EditEventPage() {
+
+  const params = useParams();
+  const router = useRouter();
+
+  const [event, setEvent] = useState<any>();
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const load = async () => {
+    const res = await getEvent(Number(params.id));
+
+    setEvent(res.data);
+  };
+
+  const submit = async (data: FormData) => {
+
+    await updateEvent(
+      Number(params.id),
+      data
+    );
+
+    router.push("/events");
+  };
+
+  return (
+    <div className="cdx-root">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap');
+
+        .cdx-root {
+          --ink: #0B0F19;
+          --blue-900: #0A1E4D;
+          --blue-700: #143FA6;
+          --blue-600: #1D4ED8;
+          --blue-500: #3B6CF0;
+          --blue-100: #E7EDFC;
+          --blue-50: #F4F7FE;
+          --line: #D6E0F7;
+          --white: #FFFFFF;
+
+          min-height: 100vh;
+          background: var(--blue-50);
+          color: var(--ink);
+          font-family: 'Inter', system-ui, sans-serif;
+          padding-bottom: 48px;
+        }
+
+        .cdx-truss {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 10px 32px;
+          background: var(--blue-900);
+          overflow: hidden;
+        }
+        .cdx-truss-dot {
+          width: 5px;
+          height: 5px;
+          border-radius: 50%;
+          background: var(--blue-500);
+          opacity: 0.35;
+          flex-shrink: 0;
+        }
+        .cdx-truss-dot.is-lit {
+          background: var(--white);
+          opacity: 0.9;
+        }
+        .cdx-truss-status {
+          margin-left: auto;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 4px 12px;
+          border-radius: 999px;
+          background: rgba(255,255,255,0.08);
+          flex-shrink: 0;
+        }
+        .cdx-pulse {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background: #4ADE80;
+          animation: cdx-blink 2.2s ease-in-out infinite;
+        }
+        @keyframes cdx-blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.25; }
+        }
+        .cdx-truss-status span {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          letter-spacing: 0.08em;
+          color: var(--white);
+        }
+
+        .cdx-back {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+          letter-spacing: 0.06em;
+          color: var(--blue-700);
+          margin: 28px 32px 0;
+        }
+        .cdx-back:hover {
+          color: var(--blue-600);
+        }
+
+        .cdx-header {
+          padding: 12px 32px 24px;
+        }
+        .cdx-eyebrow {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+          color: var(--blue-700);
+          font-weight: 700;
+        }
+        .cdx-title {
+          font-family: 'Oswald', sans-serif;
+          font-weight: 700;
+          font-size: 36px;
+          letter-spacing: 0.01em;
+          text-transform: uppercase;
+          color: var(--ink);
+          margin-top: 6px;
+        }
+        .cdx-subtitle {
+          color: #4B5670;
+          margin-top: 6px;
+          font-size: 14.5px;
+          font-family: 'JetBrains Mono', monospace;
+          letter-spacing: 0.02em;
+        }
+
+        .cdx-panel {
+          margin: 0 32px;
+          background: var(--white);
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          padding: 28px;
+          box-shadow: 0 1px 2px rgba(10, 30, 77, 0.04);
+        }
+
+        .cdx-loading {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin: 32px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 13px;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: var(--blue-700);
+        }
+        .cdx-loading-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background: var(--blue-600);
+          animation: cdx-blink 1.1s ease-in-out infinite;
+        }
+      `}</style>
+
+      <div className="cdx-truss">
+        {Array.from({ length: 34 }).map((_, i) => (
+          <span
+            key={i}
+            className={`cdx-truss-dot ${i % 4 === 0 ? "is-lit" : ""}`}
+          />
+        ))}
+        <div className="cdx-truss-status">
+          <span className="cdx-pulse" />
+          <span>SEMUA SISTEM AKTIF</span>
+        </div>
+      </div>
+
+      <Link href="/events" className="cdx-back">
+        <ArrowLeft size={13} />
+        Kembali ke Events
+      </Link>
+
+      <div className="cdx-header">
+        <p className="cdx-eyebrow">Panel Admin — Edit Acara</p>
+        <h1 className="cdx-title">Edit Event</h1>
+        {event?.title && (
+          <p className="cdx-subtitle">ID #{params.id} — {event.title}</p>
+        )}
+      </div>
+
+      {!event ? (
+        <div className="cdx-loading">
+          <span className="cdx-loading-dot" />
+          Memuat data event...
+        </div>
+      ) : (
+        <div className="cdx-panel">
+          <EventForm
+            initialData={event}
+            onSubmit={submit}
+          />
+        </div>
+      )}
+    </div>
+  );
+}

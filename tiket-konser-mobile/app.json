@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Tiket Konser",
+    "slug": "tiket-konser-mobile",
+    "scheme": "tiketkonser",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#111827"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "plugins": ["expo-router"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tarunabhakti.tiketkonser"
+    },
+    "android": {
+      "package": "com.tarunabhakti.tiketkonser",
+      "adaptiveIcon": {
+        "backgroundColor": "#111827"
+      }
+    },
+    "extra": {
+      "eas": {}
+    }
+  }
+}
