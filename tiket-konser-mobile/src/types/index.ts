@@ -31,10 +31,10 @@ export interface EventItem {
   title: string;
   description?: string | null;
   event_date: string;
-  event_time: string;
+  event_time?: string | null;
   venue: string;
   poster_url?: string | null;
-  status: 'open' | 'closed';
+  status: string;
   total_sold?: number;
   total_quota?: number;
   artists?: Artist[];

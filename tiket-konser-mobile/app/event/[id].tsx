@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -8,789 +8,559 @@ import {
   StyleSheet,
   Text,
   View,
-} from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+} from 'react-native';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
-import { getEvents } from "../../src/api/events";
-import { EventItem } from "../../src/types";
-import { formatDate, formatRupiah } from "../../src/utils/format";
-import StatusBadge from "../../src/components/StatusBadge";
-import PrimaryButton from "../../src/components/PrimaryButton";
-
-const PLACEHOLDER =
-  "https://placehold.co/600x400/4F46E5/FFFFFF?text=Konser";
-
-interface TicketCategory {
-  id: number;
-  name: string;
-  price: number;
-  quota: number;
-  sold: number;
-}
-
-interface SelectedTicket {
-  ticket_category_id: number;
-  quantity: number;
-}
+import { getEvent } from '@/api/events';
+import { useCart } from '@/context/CartContext';
+import { EventItem, TicketCategory, CartItem } from '@/types';
 
 export default function EventDetailScreen() {
   const router = useRouter();
+  const { id } = useLocalSearchParams<{ id: string }>();
 
-  const params = useLocalSearchParams<{ id: string }>();
+  const { setCheckout } = useCart();
 
   const [event, setEventData] = useState<EventItem | null>(null);
-
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const [error, setError] = useState<string | null>(null);
-
-  const [selectedTickets, setSelectedTickets] = useState<
-    SelectedTicket[]
-  >([]);
-
-  /**
-   * Ambil detail event
-   */
-  const loadEvent = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const events = await getEvents();
-
-      const found = events.find(
-        (item: EventItem) =>
-          String(item.id) === String(params.id)
-      );
-
-      if (!found) {
-        setError("Event tidak ditemukan.");
-        return;
-      }
-
-      setEventData(found);
-    } catch (err: any) {
-      console.error("Gagal mengambil event:", err);
-
-      setError(
-        err?.message || "Gagal mengambil data event."
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [params.id]);
+  // Menyimpan jumlah tiket berdasarkan ID kategori
+  const [quantities, setQuantities] = useState<Record<number, number>>({});
 
   useEffect(() => {
     loadEvent();
-  }, [loadEvent]);
+  }, [id]);
 
-  /**
-   * Ambil kategori tiket dari event.
-   *
-   * Karena EventItem kamu mungkin belum memiliki
-   * property ticket_categories, sementara kita
-   * gunakan casting any.
-   */
-  const ticketCategories: TicketCategory[] =
-    ((event as any)?.ticket_categories ||
-      (event as any)?.ticketCategories ||
-      []) as TicketCategory[];
+  const loadEvent = async () => {
+    if (!id) {
+      setError('ID event tidak ditemukan');
+      setLoading(false);
+      return;
+    }
 
-  /**
-   * Jumlah tiket yang dipilih berdasarkan category ID
-   */
-  const getQuantity = (categoryId: number) => {
-    const selected = selectedTickets.find(
-      (item) =>
-        item.ticket_category_id === categoryId
-    );
+    try {
+      setLoading(true);
+      setError('');
 
-    return selected?.quantity || 0;
+      const result = await getEvent(Number(id));
+
+      // Menyesuaikan kemungkinan bentuk response API
+      const data = (result as any)?.data ?? result;
+
+      setEventData(data);
+    } catch (err: any) {
+      console.error('Gagal mengambil detail event:', err);
+      setError(err?.message || 'Gagal mengambil detail event');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  /**
-   * Tambah tiket
-   */
-  const increaseTicket = (category: TicketCategory) => {
+  const increaseQuantity = (category: TicketCategory) => {
+    const current = quantities[category.id] || 0;
+
     const available =
-      Number(category.quota || 0) -
-      Number(category.sold || 0);
+      category.available ??
+      Math.max(Number(category.quota) - Number(category.sold || 0), 0);
 
-    const currentQuantity = getQuantity(category.id);
-
-    if (available <= 0) {
+    if (current >= available) {
       Alert.alert(
-        "Tiket Habis",
-        `Tiket ${category.name} sudah habis.`
+        'Tiket tidak tersedia',
+        `Sisa tiket ${category.name} hanya ${available}.`
       );
       return;
     }
 
-    if (currentQuantity >= available) {
+    setQuantities((prev) => ({
+      ...prev,
+      [category.id]: current + 1,
+    }));
+  };
+
+  const decreaseQuantity = (category: TicketCategory) => {
+    const current = quantities[category.id] || 0;
+
+    if (current <= 0) return;
+
+    setQuantities((prev) => ({
+      ...prev,
+      [category.id]: current - 1,
+    }));
+  };
+
+  const selectedCategories: TicketCategory[] = useMemo(() => {
+    return (
+      event?.categories?.filter(
+        (category) => (quantities[category.id] || 0) > 0
+      ) ?? []
+    );
+  }, [event?.categories, quantities]);
+
+  const cartItems: CartItem[] = useMemo(() => {
+    return selectedCategories.map((category) => ({
+      ticket_category_id: category.id,
+      name: category.name,
+      price: Number(category.price),
+      quantity: quantities[category.id] || 0,
+    }));
+  }, [selectedCategories, quantities]);
+
+  const total = useMemo(() => {
+    return cartItems.reduce((sum, item) => {
+      return sum + Number(item.price) * item.quantity;
+    }, 0);
+  }, [cartItems]);
+
+  const totalQuantity = useMemo(() => {
+    return cartItems.reduce((sum, item) => {
+      return sum + item.quantity;
+    }, 0);
+  }, [cartItems]);
+
+  const handleCheckout = () => {
+    if (!event) return;
+
+    if (cartItems.length === 0) {
       Alert.alert(
-        "Stok Tidak Cukup",
-        `Tiket yang tersedia hanya ${available}.`
+        'Pilih tiket',
+        'Silakan pilih minimal satu tiket terlebih dahulu.'
       );
       return;
     }
 
-    setSelectedTickets((prev) => {
-      const exists = prev.find(
-        (item) =>
-          item.ticket_category_id === category.id
-      );
+    setCheckout(event.id, event.title, cartItems);
 
-      if (exists) {
-        return prev.map((item) =>
-          item.ticket_category_id === category.id
-            ? {
-                ...item,
-                quantity: item.quantity + 1,
-              }
-            : item
-        );
-      }
+    router.push('/checkout');
+  };
 
-      return [
-        ...prev,
-        {
-          ticket_category_id: category.id,
-          quantity: 1,
-        },
-      ];
+  const formatPrice = (price: number) => {
+    return `Rp ${Number(price).toLocaleString('id-ID')}`;
+  };
+
+  const formatDate = (date: string) => {
+    if (!date) return '-';
+
+    const parsedDate = new Date(date);
+
+    if (Number.isNaN(parsedDate.getTime())) {
+      return date;
+    }
+
+    return parsedDate.toLocaleDateString('id-ID', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
     });
   };
 
-  /**
-   * Kurangi tiket
-   */
-  const decreaseTicket = (categoryId: number) => {
-    setSelectedTickets((prev) => {
-      const exists = prev.find(
-        (item) =>
-          item.ticket_category_id === categoryId
-      );
-
-      if (!exists) {
-        return prev;
-      }
-
-      if (exists.quantity <= 1) {
-        return prev.filter(
-          (item) =>
-            item.ticket_category_id !== categoryId
-        );
-      }
-
-      return prev.map((item) =>
-        item.ticket_category_id === categoryId
-          ? {
-              ...item,
-              quantity: item.quantity - 1,
-            }
-          : item
-      );
-    });
-  };
-
-  /**
-   * Total jumlah tiket
-   */
-  const totalTicketQuantity = selectedTickets.reduce(
-    (total, item) => total + item.quantity,
-    0
-  );
-
-  /**
-   * Total harga tiket
-   */
-  const totalPrice = selectedTickets.reduce(
-    (total, selected) => {
-      const category = ticketCategories.find(
-        (item) =>
-          item.id === selected.ticket_category_id
-      );
-
-      if (!category) {
-        return total;
-      }
-
-      return (
-        total +
-        Number(category.price || 0) *
-          selected.quantity
-      );
-    },
-    0
-  );
-
-  /**
-   * Tombol pilih tiket
-   */
-  const handleBuy = () => {
-    if (!event) {
-      return;
-    }
-
-    /**
-     * Event harus open
-     */
-    if (event.status !== "open") {
-      Alert.alert(
-        "Penjualan Ditutup",
-        "Tiket untuk event ini belum tersedia atau penjualannya sudah ditutup."
-      );
-
-      return;
-    }
-
-    /**
-     * Pastikan user memilih tiket
-     */
-    if (selectedTickets.length === 0) {
-      Alert.alert(
-        "Pilih Tiket",
-        "Silakan pilih minimal 1 tiket terlebih dahulu."
-      );
-
-      return;
-    }
-
-    /**
-     * Kirim data tiket ke checkout
-     */
-    const itemsParam = encodeURIComponent(
-      JSON.stringify(selectedTickets)
-    );
-
-    router.push(
-      `/checkout?eventId=${event.id}&title=${encodeURIComponent(
-        event.title
-      )}&items=${itemsParam}`
-    );
-  };
-
-  /**
-   * Loading
-   */
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator
-          size="large"
-          color="#4F46E5"
-        />
-
-        <Text style={styles.loadingText}>
-          Memuat event...
-        </Text>
+        <ActivityIndicator size="large" color="#4F46E5" />
+        <Text style={styles.loadingText}>Memuat detail event...</Text>
       </View>
     );
   }
 
-  /**
-   * Error
-   */
   if (error || !event) {
     return (
       <View style={styles.center}>
-        <Text style={styles.errorTitle}>
-          Event tidak ditemukan
-        </Text>
+        <Ionicons name="alert-circle-outline" size={54} color="#EF4444" />
+
+        <Text style={styles.errorTitle}>Gagal memuat event</Text>
 
         <Text style={styles.errorText}>
-          {error || "Data event tidak tersedia."}
+          {error || 'Event tidak ditemukan'}
         </Text>
 
-        <Pressable
-          style={styles.backButton}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.backButtonText}>
-            Kembali
-          </Text>
+        <Pressable style={styles.retryButton} onPress={loadEvent}>
+          <Text style={styles.retryText}>Coba Lagi</Text>
         </Pressable>
       </View>
     );
   }
 
+  const categories = event.categories ?? [];
+
   return (
-    <View style={styles.screen}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
-      >
-        {/* =========================
-            POSTER
-        ========================== */}
-        <Image
-          source={{
-            uri:
-              event.poster_url || PLACEHOLDER,
-          }}
-          style={styles.poster}
-          resizeMode="cover"
-        />
+    <>
+      <Stack.Screen
+        options={{
+          title: 'Detail Event',
+          headerBackTitle: 'Kembali',
+        }}
+      />
 
-        {/* =========================
-            DETAIL EVENT
-        ========================== */}
-        <View style={styles.body}>
-          {/* Status */}
-          <View style={styles.statusRow}>
-            <StatusBadge status={event.status} />
-          </View>
+      <View style={styles.container}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* POSTER */}
+          {event.poster_url ? (
+            <Image
+              source={{ uri: event.poster_url }}
+              style={styles.poster}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={styles.posterPlaceholder}>
+              <Ionicons
+                name="musical-notes"
+                size={60}
+                color="#A5B4FC"
+              />
+              <Text style={styles.posterPlaceholderText}>
+                Poster Event
+              </Text>
+            </View>
+          )}
 
-          {/* Judul */}
-          <Text style={styles.title}>
-            {event.title}
-          </Text>
+          {/* TITLE */}
+          <Text style={styles.title}>{event.title}</Text>
 
-          {/* =========================
-              TANGGAL
-          ========================== */}
+          {/* EVENT INFO */}
           <View style={styles.infoCard}>
-            <Text style={styles.infoIcon}>
-              📅
-            </Text>
+            <View style={styles.infoIcon}>
+              <Text style={styles.iconText}>📅</Text>
+            </View>
 
             <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>
-                Tanggal Event
-              </Text>
-
+              <Text style={styles.infoLabel}>Tanggal Event</Text>
               <Text style={styles.infoValue}>
                 {formatDate(event.event_date)}
               </Text>
             </View>
           </View>
 
-          {/* =========================
-              VENUE
-          ========================== */}
           <View style={styles.infoCard}>
-            <Text style={styles.infoIcon}>
-              📍
-            </Text>
+            <View style={styles.infoIcon}>
+              <Text style={styles.iconText}>📍</Text>
+            </View>
 
             <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>
-                Lokasi
-              </Text>
-
-              <Text style={styles.infoValue}>
-                {event.venue ||
-                  "Lokasi belum tersedia"}
-              </Text>
+              <Text style={styles.infoLabel}>Lokasi</Text>
+              <Text style={styles.infoValue}>{event.venue}</Text>
             </View>
           </View>
 
-          {/* =========================
-              ARTIST
-          ========================== */}
-          {!!event.artists?.length && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>
-                Artis
-              </Text>
+          {event.event_time ? (
+            <View style={styles.infoCard}>
+              <View style={styles.infoIcon}>
+                <Text style={styles.iconText}>⏰</Text>
+              </View>
 
-              {event.artists.map((artist) => (
-                <View
-                  key={String(artist.id)}
-                  style={styles.artistCard}
-                >
-                  <View style={styles.artistAvatar}>
-                    <Text
-                      style={
-                        styles.artistAvatarText
-                      }
-                    >
-                      {artist.name
-                        ?.charAt(0)
-                        ?.toUpperCase() || "A"}
-                    </Text>
-                  </View>
-
-                  <Text
-                    style={styles.artistName}
-                  >
-                    {artist.name}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* =========================
-              DESKRIPSI
-          ========================== */}
-          {!!(event as any).description && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>
-                Tentang Event
-              </Text>
-
-              <Text style={styles.description}>
-                {(event as any).description}
-              </Text>
-            </View>
-          )}
-
-          {/* =========================
-              PILIH TIKET
-          ========================== */}
-          <View style={styles.section}>
-            <View style={styles.ticketHeader}>
-              <Text style={styles.sectionTitle}>
-                Pilih Tiket
-              </Text>
-
-              {totalTicketQuantity > 0 && (
-                <Text style={styles.selectedText}>
-                  {totalTicketQuantity} tiket
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Waktu</Text>
+                <Text style={styles.infoValue}>
+                  {event.event_time}
                 </Text>
-              )}
+              </View>
             </View>
+          ) : null}
 
-            {ticketCategories.length > 0 ? (
-              ticketCategories.map(
-                (category) => {
-                  const available =
-                    Number(category.quota || 0) -
-                    Number(category.sold || 0);
+          {/* DESCRIPTION */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Tentang Event</Text>
 
-                  const quantity =
-                    getQuantity(category.id);
+            <Text style={styles.description}>
+              {event.description || 'Tidak ada deskripsi event.'}
+            </Text>
+          </View>
 
-                  const isSoldOut =
-                    available <= 0;
+          {/* TICKET */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Pilih Tiket</Text>
 
-                  return (
-                    <View
-                      key={String(category.id)}
-                      style={[
-                        styles.ticketCard,
-                        isSoldOut &&
-                          styles.ticketCardDisabled,
-                      ]}
-                    >
-                      {/* Info tiket */}
-                      <View
-                        style={
-                          styles.ticketInfo
-                        }
-                      >
-                        <Text
-                          style={
-                            styles.ticketName
-                          }
-                        >
+            {categories.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <Ionicons
+                  name="ticket-outline"
+                  size={42}
+                  color="#9CA3AF"
+                />
+
+                <Text style={styles.emptyTitle}>
+                  Tiket belum tersedia
+                </Text>
+
+                <Text style={styles.emptyText}>
+                  Kategori tiket untuk event ini belum tersedia.
+                </Text>
+              </View>
+            ) : (
+              categories.map((category) => {
+                const quantity = quantities[category.id] || 0;
+
+                const available =
+                  category.available ??
+                  Math.max(
+                    Number(category.quota) -
+                      Number(category.sold || 0),
+                    0
+                  );
+
+                const soldOut = available <= 0;
+
+                return (
+                  <View
+                    key={category.id}
+                    style={[
+                      styles.ticketCard,
+                      quantity > 0 && styles.ticketCardSelected,
+                    ]}
+                  >
+                    <View style={styles.ticketTop}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.ticketName}>
                           {category.name}
                         </Text>
 
-                        <Text
-                          style={
-                            styles.ticketPrice
-                          }
-                        >
-                          {formatRupiah(
-                            Number(
-                              category.price || 0
-                            )
-                          )}
+                        <Text style={styles.ticketPrice}>
+                          {formatPrice(category.price)}
                         </Text>
 
-                        <Text
-                          style={
-                            isSoldOut
-                              ? styles.ticketSoldOut
-                              : styles.ticketStock
-                          }
-                        >
-                          {isSoldOut
-                            ? "Tiket habis"
+                        <Text style={styles.ticketStock}>
+                          {soldOut
+                            ? 'Tiket habis'
                             : `${available} tiket tersedia`}
                         </Text>
                       </View>
 
-                      {/* Quantity */}
-                      {!isSoldOut && (
-                        <View
-                          style={
-                            styles.quantityContainer
-                          }
-                        >
-                          <Pressable
-                            style={
-                              styles.quantityButton
-                            }
-                            onPress={() =>
-                              decreaseTicket(
-                                category.id
-                              )
-                            }
-                            disabled={
-                              quantity === 0
-                            }
-                          >
-                            <Text
-                              style={[
-                                styles.quantityButtonText,
-                                quantity === 0 &&
-                                  styles.quantityButtonDisabled,
-                              ]}
-                            >
-                              −
-                            </Text>
-                          </Pressable>
-
-                          <Text
-                            style={
-                              styles.quantityText
-                            }
-                          >
-                            {quantity}
-                          </Text>
-
-                          <Pressable
-                            style={
-                              styles.quantityButton
-                            }
-                            onPress={() =>
-                              increaseTicket(
-                                category
-                              )
-                            }
-                          >
-                            <Text
-                              style={
-                                styles.quantityButtonText
-                              }
-                            >
-                              +
-                            </Text>
-                          </Pressable>
-                        </View>
-                      )}
-
-                      {isSoldOut && (
-                        <View
-                          style={
-                            styles.soldOutBadge
-                          }
-                        >
-                          <Text
-                            style={
-                              styles.soldOutBadgeText
-                            }
-                          >
-                            HABIS
-                          </Text>
+                      {quantity > 0 && (
+                        <View style={styles.selectedBadge}>
+                          <Ionicons
+                            name="checkmark"
+                            size={16}
+                            color="#4F46E5"
+                          />
                         </View>
                       )}
                     </View>
-                  );
-                }
-              )
-            ) : (
-              <View style={styles.emptyTicket}>
-                <Text
-                  style={
-                    styles.emptyTicketTitle
-                  }
-                >
-                  Tiket belum tersedia
-                </Text>
 
-                <Text
-                  style={
-                    styles.emptyTicketText
-                  }
-                >
-                  Kategori tiket untuk event ini
-                  belum tersedia.
-                </Text>
-              </View>
+                    <View style={styles.ticketBottom}>
+                      <Text style={styles.quantityLabel}>
+                        Jumlah
+                      </Text>
+
+                      <View style={styles.quantityContainer}>
+                        <Pressable
+                          style={[
+                            styles.quantityButton,
+                            quantity <= 0 &&
+                              styles.quantityButtonDisabled,
+                          ]}
+                          disabled={quantity <= 0}
+                          onPress={() =>
+                            decreaseQuantity(category)
+                          }
+                        >
+                          <Ionicons
+                            name="remove"
+                            size={20}
+                            color={
+                              quantity <= 0
+                                ? '#9CA3AF'
+                                : '#4F46E5'
+                            }
+                          />
+                        </Pressable>
+
+                        <Text style={styles.quantityText}>
+                          {quantity}
+                        </Text>
+
+                        <Pressable
+                          style={[
+                            styles.quantityButton,
+                            soldOut &&
+                              styles.quantityButtonDisabled,
+                          ]}
+                          disabled={soldOut}
+                          onPress={() =>
+                            increaseQuantity(category)
+                          }
+                        >
+                          <Ionicons
+                            name="add"
+                            size={20}
+                            color={
+                              soldOut ? '#9CA3AF' : '#4F46E5'
+                            }
+                          />
+                        </Pressable>
+                      </View>
+                    </View>
+                  </View>
+                );
+              })
             )}
           </View>
 
-          {/* =========================
-              RINGKASAN
-          ========================== */}
-          {totalTicketQuantity > 0 && (
-            <View style={styles.summaryCard}>
-              <View>
-                <Text
-                  style={styles.summaryLabel}
-                >
-                  Total Tiket
-                </Text>
+          {/* INFO */}
+          {categories.length > 0 && (
+            <View style={styles.informationCard}>
+              <Text style={styles.informationTitle}>
+                🎟️ Informasi Tiket
+              </Text>
 
-                <Text
-                  style={styles.summaryQuantity}
-                >
-                  {totalTicketQuantity} tiket
-                </Text>
-              </View>
-
-              <View style={styles.summaryRight}>
-                <Text
-                  style={styles.summaryLabel}
-                >
-                  Total
-                </Text>
-
-                <Text
-                  style={styles.summaryPrice}
-                >
-                  {formatRupiah(totalPrice)}
-                </Text>
-              </View>
+              <Text style={styles.informationText}>
+                Pilih kategori dan jumlah tiket yang ingin kamu
+                beli. Pastikan jumlah tiket sudah sesuai sebelum
+                melanjutkan ke checkout.
+              </Text>
             </View>
           )}
+        </ScrollView>
 
-          {/* =========================
-              CATATAN
-          ========================== */}
-          <View style={styles.note}>
-            <Text style={styles.noteTitle}>
-              🎟️ Informasi Tiket
-            </Text>
-
-            <Text style={styles.noteText}>
-              Pilih kategori dan jumlah tiket
-              yang ingin kamu beli. Pastikan
-              jumlah tiket sudah sesuai sebelum
-              melanjutkan ke checkout.
-            </Text>
-          </View>
-        </View>
-      </ScrollView>
-
-      {/* =========================
-          BOTTOM BUTTON
-      ========================== */}
-      <View style={styles.footer}>
-        <View style={styles.footerContent}>
+        {/* BOTTOM CHECKOUT */}
+        <View style={styles.bottomBar}>
           <View>
-            <Text style={styles.footerLabel}>
-              Total
+            <Text style={styles.totalLabel}>
+              {totalQuantity} Tiket
             </Text>
 
-            <Text style={styles.footerPrice}>
-              {formatRupiah(totalPrice)}
+            <Text style={styles.totalPrice}>
+              {formatPrice(total)}
             </Text>
           </View>
 
-          <View style={styles.footerButton}>
-            <PrimaryButton
-              title={
-                totalTicketQuantity > 0
-                  ? "Lanjut Checkout"
-                  : "Pilih Tiket"
-              }
-              onPress={handleBuy}
+          <Pressable
+            style={[
+              styles.checkoutButton,
+              cartItems.length === 0 &&
+                styles.checkoutButtonDisabled,
+            ]}
+            disabled={cartItems.length === 0}
+            onPress={handleCheckout}
+          >
+            <Text style={styles.checkoutText}>
+              Pilih Tiket
+            </Text>
+
+            <Ionicons
+              name="arrow-forward"
+              size={20}
+              color="#FFFFFF"
             />
-          </View>
+          </Pressable>
         </View>
       </View>
-    </View>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
+  container: {
     flex: 1,
-    backgroundColor: "#F9FAFB",
+    backgroundColor: '#F8FAFC',
+  },
+
+  content: {
+    padding: 20,
+    paddingBottom: 130,
   },
 
   center: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
+    justifyContent: 'center',
+    alignItems: 'center',
     padding: 24,
-    backgroundColor: "#F9FAFB",
+    backgroundColor: '#F8FAFC',
   },
 
   loadingText: {
     marginTop: 12,
-    fontSize: 14,
-    color: "#6B7280",
+    fontSize: 15,
+    color: '#6B7280',
   },
 
   errorTitle: {
+    marginTop: 16,
     fontSize: 20,
-    fontWeight: "800",
-    color: "#111827",
-    marginBottom: 8,
+    fontWeight: '800',
+    color: '#111827',
   },
 
   errorText: {
-    textAlign: "center",
+    marginTop: 8,
     fontSize: 14,
-    color: "#6B7280",
-    marginBottom: 20,
+    textAlign: 'center',
+    color: '#6B7280',
   },
 
-  backButton: {
-    backgroundColor: "#4F46E5",
-    paddingHorizontal: 22,
+  retryButton: {
+    marginTop: 20,
+    paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 10,
+    backgroundColor: '#4F46E5',
   },
 
-  backButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-  },
-
-  content: {
-    paddingBottom: 150,
+  retryText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
 
   poster: {
-    width: "100%",
-    height: 260,
-    backgroundColor: "#E5E7EB",
+    width: '100%',
+    height: 220,
+    borderRadius: 18,
+    marginBottom: 20,
+    backgroundColor: '#E5E7EB',
   },
 
-  body: {
-    padding: 20,
+  posterPlaceholder: {
+    width: '100%',
+    height: 220,
+    borderRadius: 18,
+    marginBottom: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
   },
 
-  statusRow: {
-    marginBottom: 10,
+  posterPlaceholderText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#6366F1',
+    fontWeight: '600',
   },
 
   title: {
-    fontSize: 26,
-    fontWeight: "800",
-    color: "#111827",
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#111827',
     marginBottom: 20,
   },
 
   infoCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 10,
-
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-
-    elevation: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
 
   infoIcon: {
-    fontSize: 24,
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
     marginRight: 14,
+  },
+
+  iconText: {
+    fontSize: 23,
   },
 
   infoContent: {
@@ -798,286 +568,213 @@ const styles = StyleSheet.create({
   },
 
   infoLabel: {
-    fontSize: 12,
-    color: "#9CA3AF",
-    marginBottom: 3,
-  },
-
-  infoValue: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#111827",
-  },
-
-  section: {
-    marginTop: 24,
-  },
-
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#111827",
-    marginBottom: 12,
-  },
-
-  artistCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-  },
-
-  artistAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#EEF2FF",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-
-  artistAvatarText: {
-    fontSize: 17,
-    fontWeight: "800",
-    color: "#4F46E5",
-  },
-
-  artistName: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#111827",
-  },
-
-  description: {
-    fontSize: 14,
-    lineHeight: 22,
-    color: "#6B7280",
-  },
-
-  ticketHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-
-  selectedText: {
     fontSize: 13,
-    fontWeight: "700",
-    color: "#4F46E5",
-    marginBottom: 12,
-  },
-
-  ticketCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.04,
-    shadowRadius: 5,
-
-    elevation: 2,
-  },
-
-  ticketCardDisabled: {
-    opacity: 0.65,
-  },
-
-  ticketInfo: {
-    flex: 1,
-    paddingRight: 12,
-  },
-
-  ticketName: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#111827",
-    marginBottom: 5,
-  },
-
-  ticketPrice: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#4F46E5",
-    marginBottom: 5,
-  },
-
-  ticketStock: {
-    fontSize: 12,
-    color: "#16A34A",
-    fontWeight: "600",
-  },
-
-  ticketSoldOut: {
-    fontSize: 12,
-    color: "#DC2626",
-    fontWeight: "700",
-  },
-
-  quantityContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-
-  quantityButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: "#EEF2FF",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  quantityButtonText: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#4F46E5",
-    lineHeight: 25,
-  },
-
-  quantityButtonDisabled: {
-    color: "#C7D2FE",
-  },
-
-  quantityText: {
-    minWidth: 24,
-    textAlign: "center",
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#111827",
-  },
-
-  soldOutBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: "#FEE2E2",
-  },
-
-  soldOutBadgeText: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: "#DC2626",
-  },
-
-  emptyTicket: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    padding: 20,
-    alignItems: "center",
-  },
-
-  emptyTicketTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#111827",
-    marginBottom: 5,
-  },
-
-  emptyTicketText: {
-    fontSize: 13,
-    color: "#9CA3AF",
-    textAlign: "center",
-  },
-
-  summaryCard: {
-    marginTop: 20,
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: "#111827",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-
-  summaryLabel: {
-    fontSize: 11,
-    color: "#9CA3AF",
+    color: '#9CA3AF',
     marginBottom: 4,
   },
 
-  summaryQuantity: {
+  infoValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#111827',
+  },
+
+  section: {
+    marginTop: 28,
+  },
+
+  sectionTitle: {
+    fontSize: 23,
+    fontWeight: '900',
+    color: '#111827',
+    marginBottom: 14,
+  },
+
+  description: {
     fontSize: 15,
-    fontWeight: "700",
-    color: "#FFFFFF",
+    lineHeight: 24,
+    color: '#6B7280',
   },
 
-  summaryRight: {
-    alignItems: "flex-end",
+  ticketCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
 
-  summaryPrice: {
+  ticketCardSelected: {
+    borderColor: '#6366F1',
+    borderWidth: 2,
+  },
+
+  ticketTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  ticketName: {
     fontSize: 18,
-    fontWeight: "800",
-    color: "#FFFFFF",
+    fontWeight: '900',
+    color: '#111827',
   },
 
-  note: {
-    marginTop: 20,
-    backgroundColor: "#EEF2FF",
-    padding: 16,
-    borderRadius: 14,
+  ticketPrice: {
+    marginTop: 6,
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#4F46E5',
   },
 
-  noteTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#3730A3",
-    marginBottom: 5,
-  },
-
-  noteText: {
+  ticketStock: {
+    marginTop: 5,
     fontSize: 13,
-    lineHeight: 20,
-    color: "#4F46E5",
+    color: '#6B7280',
   },
 
-  footer: {
-    position: "absolute",
+  selectedBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
+  },
+
+  ticketBottom: {
+    marginTop: 18,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  quantityLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+
+  quantityContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+
+  quantityButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
+  },
+
+  quantityButtonDisabled: {
+    backgroundColor: '#F3F4F6',
+  },
+
+  quantityText: {
+    minWidth: 22,
+    textAlign: 'center',
+    fontSize: 17,
+    fontWeight: '900',
+    color: '#111827',
+  },
+
+  emptyCard: {
+    padding: 28,
+    borderRadius: 18,
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+
+  emptyTitle: {
+    marginTop: 12,
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+  },
+
+  emptyText: {
+    marginTop: 6,
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 21,
+    color: '#9CA3AF',
+  },
+
+  informationCard: {
+    marginTop: 24,
+    padding: 20,
+    borderRadius: 18,
+    backgroundColor: '#EEF2FF',
+  },
+
+  informationTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#4338CA',
+    marginBottom: 8,
+  },
+
+  informationText: {
+    fontSize: 14,
+    lineHeight: 22,
+    color: '#6366F1',
+  },
+
+  bottomBar: {
+    position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 24,
+    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
+    borderTopColor: '#E5E7EB',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
 
-  footerContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  totalLabel: {
+    fontSize: 13,
+    color: '#9CA3AF',
   },
 
-  footerLabel: {
-    fontSize: 11,
-    color: "#9CA3AF",
-    marginBottom: 2,
+  totalPrice: {
+    marginTop: 3,
+    fontSize: 19,
+    fontWeight: '900',
+    color: '#111827',
   },
 
-  footerPrice: {
-    fontSize: 17,
-    fontWeight: "800",
-    color: "#111827",
+  checkoutButton: {
+    minWidth: 170,
+    height: 54,
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    backgroundColor: '#4F46E5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
 
-  footerButton: {
-    width: 170,
+  checkoutButtonDisabled: {
+    backgroundColor: '#C7D2FE',
+  },
+
+  checkoutText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
   },
 });
