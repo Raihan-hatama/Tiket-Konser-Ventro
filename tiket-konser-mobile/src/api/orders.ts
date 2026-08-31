@@ -1,9 +1,12 @@
 import api from './client';
-import { ApiResponse, Order } from '@/types';
+import { ApiResponse, Order } from '../types';
 
 export interface CreateOrderPayload {
   event_id: number;
-  items: { ticket_category_id: number; quantity: number }[];
+  items: {
+    ticket_category_id: number;
+    quantity: number;
+  }[];
 }
 
 export interface CreateOrderResult {
@@ -12,20 +15,29 @@ export interface CreateOrderResult {
   total_price: number;
 }
 
-export const createOrder = async (payload: CreateOrderPayload) => {
+export const createOrder = async (
+  payload: CreateOrderPayload
+): Promise<CreateOrderResult> => {
   const { data } = await api.post<ApiResponse<CreateOrderResult>>(
     '/orders',
     payload
   );
+
   return data.data;
 };
 
-export const getOrders = async () => {
+export const getOrders = async (): Promise<Order[]> => {
   const { data } = await api.get<ApiResponse<Order[]>>('/orders');
+
   return data.data;
 };
 
-export const getOrder = async (id: number | string) => {
-  const { data } = await api.get<ApiResponse<Order>>(`/orders/${id}`);
+export const getOrder = async (
+  id: number | string
+): Promise<Order> => {
+  const { data } = await api.get<ApiResponse<Order>>(
+    `/orders/${id}`
+  );
+
   return data.data;
 };

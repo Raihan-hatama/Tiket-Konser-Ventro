@@ -1,31 +1,31 @@
 import api from './client';
-import { ApiResponse } from '../types';
 
-interface UploadProofResult {
-  proof_url: string;
+export interface CreatePaymentResult {
+  order_id: number;
+  order_code: string;
+  payment_method: string;
+  amount: number;
+  snap_token: string;
+  redirect_url: string;
 }
 
-// `asset` comes straight from expo-image-picker's result.assets[0]
-export const uploadPaymentProof = async (
+export const createPayment = async (
   orderId: number | string,
-  asset: { uri: string; fileName?: string | null; mimeType?: string | null }
+  paymentMethod: string
 ) => {
-  const formData = new FormData();
-  const fileName = asset.fileName || `proof-${Date.now()}.jpg`;
-  const mimeType = asset.mimeType || 'image/jpeg';
+  console.log('PAYMENT URL:', `/payments/${orderId}/create`);
+  console.log('PAYMENT METHOD:', paymentMethod);
 
-  // React Native's FormData expects this shape for file uploads
-  formData.append('proof', {
-    uri: asset.uri,
-    name: fileName,
-    type: mimeType,
-  } as unknown as Blob);
-  formData.append('payment_method', 'transfer');
-
-  const { data } = await api.post<ApiResponse<UploadProofResult>>(
-    `/payments/${orderId}/upload`,
-    formData,
-    { headers: { 'Content-Type': 'multipart/form-data' } }
+  const { data } = await api.post<{
+    success: boolean;
+    message: string;
+    data: CreatePaymentResult;
+  }>(
+    `/payments/${orderId}/create`,
+    {
+      payment_method: paymentMethod,
+    }
   );
+
   return data.data;
 };
