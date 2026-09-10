@@ -1,19 +1,22 @@
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
+
 require('dotenv').config();
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: parseInt(process.env.DB_PORT) || 3306,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-
-  waitForConnections: true,
-  connectionLimit: 10,
-
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
   ssl: {
     rejectUnauthorized: false
   }
 });
+
+pool.connect()
+  .then(client => {
+    console.log('✅ BERHASIL TERHUBUNG KE SUPABASE');
+    client.release();
+  })
+  .catch(err => {
+    console.error('❌ GAGAL TERHUBUNG KE SUPABASE');
+    console.error(err.message);
+  });
 
 module.exports = pool;
