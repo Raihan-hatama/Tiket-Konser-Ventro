@@ -1,9 +1,11 @@
+
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 
-const generateToken = (user) =>
-  jwt.sign(
+// Generate JWT
+const generateToken = (user) => {
+  return jwt.sign(
     {
       id: user.id,
       email: user.email,
@@ -11,16 +13,16 @@ const generateToken = (user) =>
     },
     process.env.JWT_SECRET,
     {
-      expiresIn: process.env.JWT_EXPIRES_IN,
+      expiresIn: process.env.JWT_EXPIRES_IN || '1d',
     }
   );
+};
 
 // POST /api/auth/register
 const register = async (req, res) => {
   try {
     const { name, email, password, phone } = req.body;
 
-    // Validasi
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
@@ -29,12 +31,12 @@ const register = async (req, res) => {
     }
 
     // Cek email
-    const [existing] = await db.query(
-      'SELECT id FROM users WHERE email = ?',
+    const existing = await db.query(
+      'SELECT id FROM users WHERE email = $1',
       [email]
     );
 
-    if (existing.length > 0) {
+    if (existing.rows.length > 0) {
       return res.status(409).json({
         success: false,
         message: 'Email sudah terdaftar',
@@ -43,25 +45,19 @@ const register = async (req, res) => {
 
     // Hash password
     const hashed = await bcrypt.hash(password, 10);
-
-    // Role customer dibuat sebagai parameter
     const role = 'customer';
 
-    const [result] = await db.query(
+    // Insert user
+    const result = await db.query(
       `INSERT INTO users
-      (name, email, password, phone, role)
-      VALUES (?, ?, ?, ?, ?)`,
-      [
-        name,
-        email,
-        hashed,
-        phone || null,
-        role,
-      ]
+       (name, email, password, phone, role)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [name, email, hashed, phone || null, role]
     );
 
     const user = {
-      id: result.insertId,
+      id: result.rows[0].id,
       name,
       email,
       phone: phone || null,
@@ -82,11 +78,10 @@ const register = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: err.message,
+      message: 'Terjadi kesalahan saat registrasi',
     });
   }
 };
-
 
 // POST /api/auth/login
 const login = async (req, res) => {
@@ -100,20 +95,22 @@ const login = async (req, res) => {
       });
     }
 
-    const [rows] = await db.query(
-      'SELECT * FROM users WHERE email = ?',
+    // Cari user
+    const result = await db.query(
+      'SELECT * FROM users WHERE email = $1 LIMIT 1',
       [email]
     );
 
-    if (rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(401).json({
         success: false,
         message: 'Email atau password salah',
       });
     }
 
-    const user = rows[0];
+    const user = result.rows[0];
 
+    // Verifikasi password
     const valid = await bcrypt.compare(
       password,
       user.password
@@ -146,16 +143,15 @@ const login = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: err.message,
+      message: 'Terjadi kesalahan pada server',
     });
   }
 };
 
-
 // GET /api/auth/me
 const me = async (req, res) => {
   try {
-    const [rows] = await db.query(
+    const result = await db.query(
       `SELECT
         id,
         name,
@@ -163,12 +159,12 @@ const me = async (req, res) => {
         phone,
         role,
         created_at
-      FROM users
-      WHERE id = ?`,
+       FROM users
+       WHERE id = $1`,
       [req.user.id]
     );
 
-    if (rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'User tidak ditemukan',
@@ -177,7 +173,7 @@ const me = async (req, res) => {
 
     return res.json({
       success: true,
-      data: rows[0],
+      data: result.rows[0],
     });
 
   } catch (err) {
@@ -185,7 +181,7 @@ const me = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: err.message,
+      message: 'Terjadi kesalahan pada server',
     });
   }
 };

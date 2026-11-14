@@ -1,27 +1,14 @@
+
 const db = require('../config/db');
 const snap = require('../config/midtrans');
 
 const BASE = process.env.BASE_URL;
 
-// ============================================================
-// CREATE MIDTRANS PAYMENT
-// POST /api/payments/:orderId/create
-// CUSTOMER
-// ============================================================
 const createPayment = async (req, res) => {
   try {
     const { orderId } = req.params;
     const { payment_method } = req.body;
 
-    console.log('====================================');
-    console.log('CREATE MIDTRANS PAYMENT');
-    console.log('ORDER ID:', orderId);
-    console.log('METHOD:', payment_method);
-    console.log('====================================');
-
-    // --------------------------------------------------------
-    // VALIDASI PAYMENT METHOD
-    // --------------------------------------------------------
     const allowedMethods = [
       'qris',
       'gopay',
@@ -48,43 +35,31 @@ const createPayment = async (req, res) => {
       });
     }
 
-    // --------------------------------------------------------
-    // CARI ORDER
-    // CUSTOMER HANYA BOLEH BAYAR ORDER MILIK SENDIRI
-    // --------------------------------------------------------
-    const [orders] = await db.query(
+    const orderResult = await db.query(
       `
-      SELECT
-        o.*,
-        u.name AS customer_name,
-        u.email AS customer_email,
-        e.title AS event_title
-      FROM orders o
-      JOIN users u
-        ON u.id = o.user_id
-      JOIN events e
-        ON e.id = o.event_id
-      WHERE o.id = ?
-        AND o.user_id = ?
+        SELECT
+          o.*,
+          u.name AS customer_name,
+          u.email AS customer_email,
+          e.title AS event_title
+        FROM orders o
+        JOIN users u ON u.id = o.user_id
+        JOIN events e ON e.id = o.event_id
+        WHERE o.id = $1
+          AND o.user_id = $2
       `,
-      [
-        orderId,
-        req.user.id,
-      ]
+      [orderId, req.user.id]
     );
 
-    if (orders.length === 0) {
+    if (orderResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Pesanan tidak ditemukan',
       });
     }
 
-    const order = orders[0];
+    const order = orderResult.rows[0];
 
-    // --------------------------------------------------------
-    // CEK STATUS ORDER
-    // --------------------------------------------------------
     if (order.status === 'paid') {
       return res.status(400).json({
         success: false,
@@ -99,21 +74,20 @@ const createPayment = async (req, res) => {
       });
     }
 
-    // --------------------------------------------------------
-    // AMBIL ORDER ITEMS
-    // --------------------------------------------------------
-    const [items] = await db.query(
+    const itemsResult = await db.query(
       `
-      SELECT
-        oi.*,
-        tc.name AS category_name
-      FROM order_items oi
-      JOIN ticket_categories tc
-        ON tc.id = oi.ticket_category_id
-      WHERE oi.order_id = ?
+        SELECT
+          oi.*,
+          tc.name AS category_name
+        FROM order_items oi
+        JOIN ticket_categories tc
+          ON tc.id = oi.ticket_category_id
+        WHERE oi.order_id = $1
       `,
       [order.id]
     );
+
+    const items = itemsResult.rows;
 
     if (items.length === 0) {
       return res.status(400).json({
@@ -122,9 +96,6 @@ const createPayment = async (req, res) => {
       });
     }
 
-    // --------------------------------------------------------
-    // BUAT ITEM DETAILS MIDTRANS
-    // --------------------------------------------------------
     const item_details = items.map((item) => ({
       id: String(item.ticket_category_id),
       price: Number(item.unit_price),
@@ -132,87 +103,45 @@ const createPayment = async (req, res) => {
       name: String(item.category_name).substring(0, 50),
     }));
 
-    // --------------------------------------------------------
-    // PARAMETER MIDTRANS
-    // --------------------------------------------------------
     const midtransParameter = {
       transaction_details: {
         order_id: order.order_code,
         gross_amount: Number(order.total_price),
       },
-
       item_details,
-
       customer_details: {
         first_name: order.customer_name || 'Customer',
         email: order.customer_email || '',
       },
-
-      enabled_payments: [
-        payment_method,
-      ],
+      enabled_payments: [payment_method],
     };
 
-    console.log(
-      'MIDTRANS PARAMETER:',
-      JSON.stringify(
-        midtransParameter,
-        null,
-        2
-      )
-    );
+    const transaction = await snap.createTransaction(midtransParameter);
 
-    // --------------------------------------------------------
-    // CREATE TRANSACTION MIDTRANS
-    // --------------------------------------------------------
-    const transaction =
-      await snap.createTransaction(
-        midtransParameter
-      );
+    const snap_token = transaction.token;
+    const redirect_url = transaction.redirect_url;
 
-    const snap_token =
-      transaction.token;
-
-    const redirect_url =
-      transaction.redirect_url;
-
-    console.log(
-      'MIDTRANS TOKEN:',
-      snap_token
-    );
-
-    console.log(
-      'MIDTRANS REDIRECT:',
-      redirect_url
-    );
-
-    // --------------------------------------------------------
-    // CEK PAYMENT YANG SUDAH ADA
-    // --------------------------------------------------------
-    const [payments] = await db.query(
+    const paymentResult = await db.query(
       `
-      SELECT *
-      FROM payments
-      WHERE order_id = ?
+        SELECT id
+        FROM payments
+        WHERE order_id = $1
       `,
       [order.id]
     );
 
-    if (payments.length > 0) {
-      // ------------------------------------------------------
-      // UPDATE PAYMENT
-      // ------------------------------------------------------
+    if (paymentResult.rows.length > 0) {
       await db.query(
         `
-        UPDATE payments
-        SET
-          payment_method = ?,
-          amount = ?,
-          snap_token = ?,
-          midtrans_order_id = ?,
-          transaction_status = 'pending',
-          status = 'pending'
-        WHERE order_id = ?
+          UPDATE payments
+          SET
+            payment_method = $1,
+            amount = $2,
+            snap_token = $3,
+            midtrans_order_id = $4,
+            transaction_status = 'pending',
+            status = 'pending'
+          WHERE order_id = $5
         `,
         [
           payment_method,
@@ -223,22 +152,18 @@ const createPayment = async (req, res) => {
         ]
       );
     } else {
-      // ------------------------------------------------------
-      // INSERT PAYMENT
-      // ------------------------------------------------------
       await db.query(
         `
-        INSERT INTO payments
-        (
-          order_id,
-          payment_method,
-          amount,
-          status,
-          snap_token,
-          midtrans_order_id,
-          transaction_status
-        )
-        VALUES (?, ?, ?, 'pending', ?, ?, 'pending')
+          INSERT INTO payments (
+            order_id,
+            payment_method,
+            amount,
+            status,
+            snap_token,
+            midtrans_order_id,
+            transaction_status
+          )
+          VALUES ($1, $2, $3, 'pending', $4, $5, 'pending')
         `,
         [
           order.id,
@@ -250,9 +175,6 @@ const createPayment = async (req, res) => {
       );
     }
 
-    // --------------------------------------------------------
-    // RESPONSE
-    // --------------------------------------------------------
     return res.json({
       success: true,
       message: 'Pembayaran berhasil dibuat',
@@ -265,51 +187,19 @@ const createPayment = async (req, res) => {
         redirect_url,
       },
     });
-
   } catch (err) {
-    console.error(
-      'CREATE PAYMENT ERROR:',
-      err
-    );
+    console.error('CREATE PAYMENT ERROR:', err);
 
     return res.status(500).json({
       success: false,
-      message:
-        err?.message ||
-        'Gagal membuat pembayaran Midtrans',
+      message: err?.message || 'Gagal membuat pembayaran Midtrans',
     });
   }
 };
 
-
-// ============================================================
-// MIDTRANS WEBHOOK
-// POST /api/payments/midtrans/webhook
-// TIDAK MEMAKAI AUTHENTICATE
-// ============================================================
 const webhook = async (req, res) => {
   try {
     const notification = req.body;
-
-    console.log(
-      '===================================='
-    );
-
-    console.log(
-      'MIDTRANS NOTIFICATION'
-    );
-
-    console.log(
-      JSON.stringify(
-        notification,
-        null,
-        2
-      )
-    );
-
-    console.log(
-      '===================================='
-    );
 
     const {
       order_id,
@@ -326,44 +216,36 @@ const webhook = async (req, res) => {
       });
     }
 
-    // --------------------------------------------------------
-    // CARI ORDER
-    // --------------------------------------------------------
-    const [orders] = await db.query(
+    const orderResult = await db.query(
       `
-      SELECT *
-      FROM orders
-      WHERE order_code = ?
+        SELECT *
+        FROM orders
+        WHERE order_code = $1
       `,
       [order_id]
     );
 
-    if (orders.length === 0) {
+    if (orderResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Order tidak ditemukan',
       });
     }
 
-    const order = orders[0];
+    const order = orderResult.rows[0];
 
-    // --------------------------------------------------------
-    // TENTUKAN STATUS
-    // --------------------------------------------------------
     let paymentStatus = 'pending';
     let orderStatus = 'pending';
 
     const successPayment =
       transaction_status === 'settlement' ||
-      (
-        transaction_status === 'capture' &&
-        fraud_status !== 'challenge'
-      );
+      (transaction_status === 'capture' && fraud_status !== 'challenge');
 
-    const failedPayment =
-      transaction_status === 'cancel' ||
-      transaction_status === 'deny' ||
-      transaction_status === 'expire';
+    const failedPayment = [
+      'cancel',
+      'deny',
+      'expire',
+    ].includes(transaction_status);
 
     if (successPayment) {
       paymentStatus = 'verified';
@@ -375,103 +257,81 @@ const webhook = async (req, res) => {
       orderStatus = 'cancelled';
     }
 
-    // --------------------------------------------------------
-    // UPDATE PAYMENT
-    // --------------------------------------------------------
     await db.query(
       `
-      UPDATE payments
-      SET
-        payment_type = ?,
-        transaction_id = ?,
-        transaction_status = ?,
-        status = ?,
-        paid_at = ?
-      WHERE order_id = ?
+        UPDATE payments
+        SET
+          payment_type = $1,
+          transaction_id = $2,
+          transaction_status = $3,
+          status = $4,
+          paid_at = $5
+        WHERE order_id = $6
       `,
       [
         payment_type || null,
         transaction_id || null,
         transaction_status || null,
         paymentStatus,
-        paymentStatus === 'verified'
-          ? new Date()
-          : null,
+        paymentStatus === 'verified' ? new Date() : null,
         order.id,
       ]
     );
 
-    // --------------------------------------------------------
-    // UPDATE ORDER
-    // --------------------------------------------------------
     await db.query(
       `
-      UPDATE orders
-      SET status = ?
-      WHERE id = ?
+        UPDATE orders
+        SET status = $1
+        WHERE id = $2
       `,
-      [
-        orderStatus,
-        order.id,
-      ]
+      [orderStatus, order.id]
     );
 
-    // --------------------------------------------------------
-    // JIKA BERHASIL BAYAR
-    // TIKET PENDING -> ACTIVE
-    // --------------------------------------------------------
     if (orderStatus === 'paid') {
       await db.query(
         `
-        UPDATE tickets t
-        JOIN order_items oi
-          ON oi.id = t.order_item_id
-        SET t.status = 'active'
-        WHERE oi.order_id = ?
+          UPDATE tickets
+          SET status = 'active'
+          WHERE order_item_id IN (
+            SELECT oi.id
+            FROM order_items oi
+            WHERE oi.order_id = $1
+          )
         `,
         [order.id]
       );
     }
 
-    // --------------------------------------------------------
-    // JIKA GAGAL / EXPIRED
-    // KEMBALIKAN STOK
-    // --------------------------------------------------------
-    if (orderStatus === 'cancelled') {
-      const [items] = await db.query(
+    if (orderStatus === 'cancelled' && order.status !== 'cancelled') {
+      const itemsResult = await db.query(
         `
-        SELECT *
-        FROM order_items
-        WHERE order_id = ?
+          SELECT *
+          FROM order_items
+          WHERE order_id = $1
         `,
         [order.id]
       );
 
-      for (const item of items) {
+      for (const item of itemsResult.rows) {
         await db.query(
           `
-          UPDATE ticket_categories
-          SET sold =
-            GREATEST(
-              sold - ?,
-              0
-            )
-          WHERE id = ?
+            UPDATE ticket_categories
+            SET sold = GREATEST(COALESCE(sold, 0) - $1, 0)
+            WHERE id = $2
           `,
-          [
-            item.quantity,
-            item.ticket_category_id,
-          ]
+          [item.quantity, item.ticket_category_id]
         );
       }
 
       await db.query(
         `
-        UPDATE tickets t
-        JOIN order_items oi
-          ON oi.id = t.order_item_id
-        SET t.status = 'cancelled'
-        WHERE oi.order_id = ?
+          UPDATE tickets
+          SET status = 'cancelled'
+          WHERE order_item_id IN (
+            SELECT oi.id
+            FROM order_items oi
+            WHERE oi.order_id = $1
+          )
         `,
         [order.id]
       );
@@ -479,15 +339,10 @@ const webhook = async (req, res) => {
 
     return res.json({
       success: true,
-      message:
-        'Notification Midtrans berhasil diproses',
+      message: 'Notification Midtrans berhasil diproses',
     });
-
   } catch (err) {
-    console.error(
-      'MIDTRANS WEBHOOK ERROR:',
-      err
-    );
+    console.error('MIDTRANS WEBHOOK ERROR:', err);
 
     return res.status(500).json({
       success: false,
@@ -496,43 +351,35 @@ const webhook = async (req, res) => {
   }
 };
 
-
-// ============================================================
-// GET /api/payments/:id
-// CUSTOMER MELIHAT PAYMENT MILIKNYA
-// ============================================================
 const getOne = async (req, res) => {
   try {
-    const [rows] = await db.query(
+    const result = await db.query(
       `
-      SELECT
-        p.*,
-        o.order_code,
-        o.user_id,
-        o.event_id,
-        o.total_price,
-        o.status AS order_status,
-        e.title AS event_title
-      FROM payments p
-      JOIN orders o
-        ON o.id = p.order_id
-      JOIN events e
-        ON e.id = o.event_id
-      WHERE p.id = ?
+        SELECT
+          p.*,
+          o.order_code,
+          o.user_id,
+          o.event_id,
+          o.total_price,
+          o.status AS order_status,
+          e.title AS event_title
+        FROM payments p
+        JOIN orders o ON o.id = p.order_id
+        JOIN events e ON e.id = o.event_id
+        WHERE p.id = $1
       `,
       [req.params.id]
     );
 
-    if (rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Payment tidak ditemukan',
       });
     }
 
-    const payment = rows[0];
+    const payment = result.rows[0];
 
-    // Customer hanya boleh melihat payment miliknya
     if (
       req.user.role !== 'admin' &&
       Number(payment.user_id) !== Number(req.user.id)
@@ -547,12 +394,8 @@ const getOne = async (req, res) => {
       success: true,
       data: payment,
     });
-
   } catch (err) {
-    console.error(
-      'GET PAYMENT ERROR:',
-      err
-    );
+    console.error('GET PAYMENT ERROR:', err);
 
     return res.status(500).json({
       success: false,
@@ -561,42 +404,30 @@ const getOne = async (req, res) => {
   }
 };
 
-
-// ============================================================
-// GET /api/payments
-// ADMIN
-// ============================================================
 const getAll = async (req, res) => {
   try {
-    const [rows] = await db.query(
+    const result = await db.query(
       `
-      SELECT
-        p.*,
-        o.order_code,
-        o.total_price,
-        u.name AS customer_name,
-        e.title AS event_title
-      FROM payments p
-      JOIN orders o
-        ON o.id = p.order_id
-      JOIN users u
-        ON u.id = o.user_id
-      JOIN events e
-        ON e.id = o.event_id
-      ORDER BY p.id DESC
+        SELECT
+          p.*,
+          o.order_code,
+          o.total_price,
+          u.name AS customer_name,
+          e.title AS event_title
+        FROM payments p
+        JOIN orders o ON o.id = p.order_id
+        JOIN users u ON u.id = o.user_id
+        JOIN events e ON e.id = o.event_id
+        ORDER BY p.id DESC
       `
     );
 
     return res.json({
       success: true,
-      data: rows,
+      data: result.rows,
     });
-
   } catch (err) {
-    console.error(
-      'GET ALL PAYMENT ERROR:',
-      err
-    );
+    console.error('GET ALL PAYMENT ERROR:', err);
 
     return res.status(500).json({
       success: false,
@@ -605,70 +436,55 @@ const getAll = async (req, res) => {
   }
 };
 
-
-// ============================================================
-// UPLOAD BUKTI LAMA
-// ============================================================
 const uploadProof = async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({
         success: false,
-        message:
-          'File bukti transfer wajib diupload',
+        message: 'File bukti transfer wajib diupload',
       });
     }
 
-    const { orderId } =
-      req.params;
+    const { orderId } = req.params;
 
-    const [orders] =
-      await db.query(
-        `
+    const orderResult = await db.query(
+      `
         SELECT *
         FROM orders
-        WHERE id = ?
-          AND user_id = ?
-        `,
-        [
-          orderId,
-          req.user.id,
-        ]
-      );
+        WHERE id = $1
+          AND user_id = $2
+      `,
+      [orderId, req.user.id]
+    );
 
-    if (orders.length === 0) {
+    if (orderResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message:
-          'Pesanan tidak ditemukan',
+        message: 'Pesanan tidak ditemukan',
       });
     }
 
-    const proof_url =
-      `${BASE}/uploads/payments/${req.file.filename}`;
+    const proof_url = `${BASE}/uploads/payments/${req.file.filename}`;
 
     await db.query(
       `
-      UPDATE payments
-      SET proof_url = ?
-      WHERE order_id = ?
+        UPDATE payments
+        SET proof_url = $1
+        WHERE order_id = $2
       `,
-      [
-        proof_url,
-        orderId,
-      ]
+      [proof_url, orderId]
     );
 
     return res.json({
       success: true,
-      message:
-        'Bukti transfer berhasil diupload',
+      message: 'Bukti transfer berhasil diupload',
       data: {
         proof_url,
       },
     });
-
   } catch (err) {
+    console.error('UPLOAD PAYMENT PROOF ERROR:', err);
+
     return res.status(500).json({
       success: false,
       message: err.message,
@@ -676,22 +492,123 @@ const uploadProof = async (req, res) => {
   }
 };
 
-
-// ============================================================
-// VERIFY MANUAL LAMA
-// ============================================================
 const verify = async (req, res) => {
-  return res.status(400).json({
-    success: false,
-    message:
-      'Verifikasi manual tidak digunakan pada pembayaran Midtrans.',
-  });
+  let client;
+
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body;
+
+    if (!['verified', 'rejected'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status pembayaran tidak valid',
+      });
+    }
+
+    client = await db.connect();
+
+    await client.query('BEGIN');
+
+    const paymentResult = await client.query(
+      `
+        SELECT *
+        FROM payments
+        WHERE order_id = $1
+        FOR UPDATE
+      `,
+      [orderId]
+    );
+
+    if (paymentResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+
+      return res.status(404).json({
+        success: false,
+        message: 'Pembayaran tidak ditemukan',
+      });
+    }
+
+    const payment = paymentResult.rows[0];
+
+    if (payment.status !== 'pending') {
+      await client.query('ROLLBACK');
+
+      return res.status(400).json({
+        success: false,
+        message: 'Pembayaran ini sudah diproses',
+      });
+    }
+
+    await client.query(
+      `
+        UPDATE payments
+        SET
+          status = $1,
+          paid_at = CASE
+            WHEN $3::boolean THEN NOW()
+            ELSE NULL
+          END
+        WHERE order_id = $2
+      `,
+      [status, orderId, status === 'verified']
+    );
+
+    if (status === 'verified') {
+      await client.query(
+        `
+          UPDATE orders
+          SET status = 'paid'
+          WHERE id = $1
+        `,
+        [orderId]
+      );
+
+      await client.query(
+        `
+          UPDATE tickets
+          SET status = 'active'
+          WHERE order_item_id IN (
+            SELECT id
+            FROM order_items
+            WHERE order_id = $1
+          )
+        `,
+        [orderId]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    return res.json({
+      success: true,
+      message:
+        status === 'verified'
+          ? 'Pembayaran berhasil diverifikasi'
+          : 'Pembayaran berhasil ditolak',
+    });
+  } catch (err) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('ROLLBACK ERROR:', rollbackError);
+      }
+    }
+
+    console.error('VERIFY PAYMENT ERROR:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
 };
 
-
-// ============================================================
-// EXPORT
-// ============================================================
 module.exports = {
   createPayment,
   webhook,
