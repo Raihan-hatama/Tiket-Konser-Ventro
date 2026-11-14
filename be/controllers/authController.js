@@ -15,14 +15,14 @@ const generateToken = (user) =>
       expiresIn: process.env.JWT_EXPIRES_IN,
     }
   );
-};
 
-// POST /api/auth/register
 const register = async (req, res) => {
   try {
-    const { name, email, password, phone } = req.body;
+    const name = String(req.body?.name ?? '').trim();
+    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    const password = String(req.body?.password ?? '');
+    const phone = req.body?.phone || null;
 
-    // Validasi
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
@@ -30,45 +30,41 @@ const register = async (req, res) => {
       });
     }
 
-    // Cek email
-    const [existing] = await db.query(
-      'SELECT id FROM users WHERE email = ?',
+    const existing = await db.query(
+      'SELECT id FROM users WHERE email = $1',
       [email]
     );
 
-    if (existing.length > 0) {
+    if (existing.rows.length > 0) {
       return res.status(409).json({
         success: false,
         message: 'Email sudah terdaftar',
       });
     }
 
-    // ========================================================
-    // HASH PASSWORD
-    // ========================================================
     const hashed = await bcrypt.hash(password, 10);
-
-    // Role customer dibuat sebagai parameter
     const role = 'customer';
 
-    const [result] = await db.query(
-      `INSERT INTO users
-      (name, email, password, phone, role)
-      VALUES (?, ?, ?, ?, ?)`,
-      [
-        name,
-        email,
-        hashed,
-        phone || null,
-        role,
-      ]
+    const result = await db.query(
+      `
+        INSERT INTO users (
+          name,
+          email,
+          password,
+          phone,
+          role
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+      `,
+      [name, email, hashed, phone, role]
     );
 
     const user = {
-      id: result.insertId,
+      id: result.rows[0].id,
       name,
       email,
-      phone: phone || null,
+      phone,
       role,
     };
 
@@ -80,10 +76,7 @@ const register = async (req, res) => {
       token,
       user,
     });
-
   } catch (err) {
-    // 23505 = unique_violation (email sudah dipakai, bisa terjadi jika
-    // ada dua request registrasi bersamaan).
     if (err.code === '23505') {
       return res.status(409).json({
         success: false,
@@ -91,7 +84,7 @@ const register = async (req, res) => {
       });
     }
 
-    console.error('REGISTER ERROR:', err.message);
+    console.error('REGISTER ERROR:', err);
 
     return res.status(500).json({
       success: false,
@@ -100,7 +93,6 @@ const register = async (req, res) => {
   }
 };
 
-// POST /api/auth/login
 const login = async (req, res) => {
   try {
     const email = String(req.body?.email ?? '').trim().toLowerCase();
@@ -113,8 +105,8 @@ const login = async (req, res) => {
       });
     }
 
-    const [rows] = await db.query(
-      'SELECT * FROM users WHERE email = ?',
+    const result = await db.query(
+      'SELECT * FROM users WHERE email = $1',
       [email]
     );
 
@@ -154,9 +146,8 @@ const login = async (req, res) => {
         created_at: user.created_at,
       },
     });
-
   } catch (err) {
-    console.error('LOGIN ERROR:', err.message);
+    console.error('LOGIN ERROR:', err);
 
     return res.status(500).json({
       success: false,
@@ -165,19 +156,20 @@ const login = async (req, res) => {
   }
 };
 
-// GET /api/auth/me
 const me = async (req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT
-        id,
-        name,
-        email,
-        phone,
-        role,
-        created_at
-       FROM users
-       WHERE id = $1`,
+    const result = await db.query(
+      `
+        SELECT
+          id,
+          name,
+          email,
+          phone,
+          role,
+          created_at
+        FROM users
+        WHERE id = $1
+      `,
       [req.user.id]
     );
 
@@ -192,9 +184,8 @@ const me = async (req, res) => {
       success: true,
       data: result.rows[0],
     });
-
   } catch (err) {
-    console.error('ME ERROR:', err.message);
+    console.error('ME ERROR:', err);
 
     return res.status(500).json({
       success: false,
