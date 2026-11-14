@@ -1,3 +1,4 @@
+
 const db = require('../config/db');
 
 // ============================================================
@@ -27,13 +28,29 @@ const parseArtistIds = (artistIds) => {
     .filter((id) => Number.isInteger(id) && id > 0);
 };
 
-// ============================================================
-// GET ALL EVENTS
-// GET /api/events
-// ============================================================
+const parseArtistIds = (artist_ids) => {
+  if (!artist_ids) return [];
+
+  let ids = artist_ids;
+
+  if (typeof ids === 'string') {
+    try {
+      ids = JSON.parse(ids);
+    } catch {
+      ids = ids.split(',');
+    }
+  }
+
+  if (!Array.isArray(ids)) return [];
+
+  return [...new Set(
+    ids.map(id => Number(id)).filter(id => Number.isInteger(id) && id > 0)
+  )];
+};
+
 const getAll = async (req, res) => {
   try {
-    const { rows: events } = await db.query(`
+    const [events] = await db.query(`
       SELECT
         e.id,
         e.title,
@@ -60,9 +77,10 @@ const getAll = async (req, res) => {
       ORDER BY e.event_date ASC, e.event_time ASC
     `);
 
-    // Ambil artist untuk setiap event
+    const events = result.rows;
+
     for (const event of events) {
-      const { rows: artists } = await db.query(
+      const [artists] = await db.query(
         `
         SELECT
           a.id,
@@ -72,43 +90,35 @@ const getAll = async (req, res) => {
         FROM artists a
         INNER JOIN event_artists ea
           ON ea.artist_id = a.id
-        WHERE ea.event_id = $1
-        ORDER BY a.name ASC
+        WHERE ea.event_id = ?
         `,
         [event.id]
       );
 
-      event.artists = artists;
-
-      // Pastikan angka menjadi number
+      event.artists = artistResult.rows;
       event.total_sold = Number(event.total_sold || 0);
       event.total_quota = Number(event.total_quota || 0);
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: events,
     });
   } catch (err) {
     console.error('getAll events error:', err.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Gagal mengambil data event',
     });
   }
 };
 
-
-// ============================================================
-// GET ONE EVENT
-// GET /api/events/:id
-// ============================================================
 const getOne = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { rows: events } = await db.query(
+    const [events] = await db.query(
       `
       SELECT
         e.id,
@@ -124,7 +134,7 @@ const getOne = async (req, res) => {
       FROM events e
       LEFT JOIN ticket_categories tc
         ON tc.event_id = e.id
-      WHERE e.id = $1
+      WHERE e.id = ?
       GROUP BY
         e.id,
         e.title,
@@ -138,19 +148,19 @@ const getOne = async (req, res) => {
       [id]
     );
 
-    if (events.length === 0) {
+    if (eventResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Event tidak ditemukan',
       });
     }
 
-    const event = events[0];
+    const event = eventResult.rows[0];
 
     // ========================================================
     // ARTISTS
     // ========================================================
-    const { rows: artists } = await db.query(
+    const [artists] = await db.query(
       `
       SELECT
         a.id,
@@ -160,7 +170,7 @@ const getOne = async (req, res) => {
       FROM artists a
       INNER JOIN event_artists ea
         ON ea.artist_id = a.id
-      WHERE ea.event_id = $1
+      WHERE ea.event_id = ?
       ORDER BY a.name ASC
       `,
       [id]
@@ -169,7 +179,7 @@ const getOne = async (req, res) => {
     // ========================================================
     // TICKET CATEGORIES
     // ========================================================
-    const { rows: categories } = await db.query(
+    const [categories] = await db.query(
       `
       SELECT
         id,
@@ -179,19 +189,17 @@ const getOne = async (req, res) => {
         quota,
         sold
       FROM ticket_categories
-      WHERE event_id = $1
+      WHERE event_id = ?
       ORDER BY price ASC, id ASC
       `,
       [id]
     );
 
-    // Konversi data supaya cocok dengan TypeScript mobile
     event.total_sold = Number(event.total_sold || 0);
     event.total_quota = Number(event.total_quota || 0);
+    event.artists = artistResult.rows;
 
-    event.artists = artists;
-
-    event.categories = categories.map((category) => ({
+    event.categories = categoryResult.rows.map(category => ({
       id: category.id,
       event_id: category.event_id,
       name: category.name,
@@ -199,30 +207,26 @@ const getOne = async (req, res) => {
       quota: Number(category.quota || 0),
       sold: Number(category.sold || 0),
       available:
-        Number(category.quota || 0) - Number(category.sold || 0),
+        Number(category.quota || 0) -
+        Number(category.sold || 0),
     }));
 
-    res.json({
+    return res.json({
       success: true,
       data: event,
     });
   } catch (err) {
     console.error('getOne event error:', err.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Gagal mengambil detail event',
     });
   }
 };
 
-
-// ============================================================
-// CREATE EVENT
-// POST /api/events
-// ============================================================
 const create = async (req, res) => {
-  let client;
+  const connection = await db.getConnection();
 
   try {
     const {
@@ -238,19 +242,17 @@ const create = async (req, res) => {
     if (!title || !event_date || !event_time || !venue) {
       return res.status(400).json({
         success: false,
-        message:
-          'Title, tanggal event, waktu event, dan venue wajib diisi',
+        message: 'Title, tanggal event, waktu event, dan venue wajib diisi',
       });
     }
 
-    client = await db.connect();
-    await client.query('BEGIN');
+    await connection.beginTransaction();
 
     const poster_url = req.file
       ? `/uploads/posters/${req.file.filename}`
       : null;
 
-    const { rows } = await client.query(
+    const [result] = await connection.query(
       `
       INSERT INTO events
       (
@@ -262,8 +264,7 @@ const create = async (req, res) => {
         poster_url,
         status
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING id
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
       [
         title,
@@ -276,30 +277,44 @@ const create = async (req, res) => {
       ]
     );
 
-    const eventId = rows[0].id;
+    const eventId = result.insertId;
 
     // ========================================================
     // INSERT EVENT ARTISTS
     // ========================================================
-    const ids = parseArtistIds(artist_ids);
+    if (artist_ids) {
+      let ids = artist_ids;
 
-    if (ids && ids.length > 0) {
-      for (const artistId of ids) {
-        await client.query(
-          `
-          INSERT INTO event_artists
-          (event_id, artist_id)
-          VALUES ($1, $2)
-          ON CONFLICT (event_id, artist_id) DO NOTHING
-          `,
-          [eventId, artistId]
-        );
+      if (typeof ids === 'string') {
+        try {
+          ids = JSON.parse(ids);
+        } catch {
+          ids = ids
+            .split(',')
+            .map((id) => Number(id.trim()))
+            .filter(Boolean);
+        }
+      }
+
+      if (Array.isArray(ids)) {
+        for (const artistId of ids) {
+          if (!artistId) continue;
+
+          await connection.query(
+            `
+            INSERT INTO event_artists
+            (event_id, artist_id)
+            VALUES (?, ?)
+            `,
+            [eventId, artistId]
+          );
+        }
       }
     }
 
-    await client.query('COMMIT');
+    await connection.commit();
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: 'Event berhasil dibuat',
       data: {
@@ -307,9 +322,7 @@ const create = async (req, res) => {
       },
     });
   } catch (err) {
-    if (client) {
-      await client.query('ROLLBACK').catch(() => {});
-    }
+    await connection.rollback();
 
     console.error('create event error:', err.message);
 
@@ -320,22 +333,17 @@ const create = async (req, res) => {
       });
     }
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Gagal membuat event',
     });
   } finally {
-    if (client) client.release();
+    connection.release();
   }
 };
 
-
-// ============================================================
-// UPDATE EVENT
-// PUT /api/events/:id
-// ============================================================
 const update = async (req, res) => {
-  let client;
+  const connection = await db.getConnection();
 
   try {
     const { id } = req.params;
@@ -350,25 +358,23 @@ const update = async (req, res) => {
       artist_ids,
     } = req.body;
 
-    client = await db.connect();
-
-    const { rows: existingRows } = await client.query(
-      'SELECT * FROM events WHERE id = $1',
+    const [existing] = await connection.query(
+      'SELECT * FROM events WHERE id = ?',
       [id]
     );
 
-    if (existingRows.length === 0) {
+    if (existing.length === 0) {
+      connection.release();
+
       return res.status(404).json({
         success: false,
         message: 'Event tidak ditemukan',
       });
     }
 
-    const existing = existingRows[0];
+    await connection.beginTransaction();
 
-    await client.query('BEGIN');
-
-    let poster_url = existing.poster_url;
+    let poster_url = existing[0].poster_url;
 
     if (req.file) {
       poster_url = `/uploads/posters/${req.file.filename}`;
@@ -378,14 +384,14 @@ const update = async (req, res) => {
       `
       UPDATE events
       SET
-        title = $1,
-        description = $2,
-        event_date = $3,
-        event_time = $4,
-        venue = $5,
-        poster_url = $6,
-        status = $7
-      WHERE id = $8
+        title = ?,
+        description = ?,
+        event_date = ?,
+        event_time = ?,
+        venue = ?,
+        poster_url = ?,
+        status = ?
+      WHERE id = ?
       `,
       [
         title ?? existing.title,
@@ -399,25 +405,34 @@ const update = async (req, res) => {
       ]
     );
 
-    // ========================================================
-    // UPDATE ARTISTS
-    // ========================================================
     if (artist_ids !== undefined) {
       await client.query(
         'DELETE FROM event_artists WHERE event_id = $1',
         [id]
       );
 
-      const ids = parseArtistIds(artist_ids);
+      let ids = artist_ids;
 
-      if (ids && ids.length > 0) {
+      if (typeof ids === 'string') {
+        try {
+          ids = JSON.parse(ids);
+        } catch {
+          ids = ids
+            .split(',')
+            .map((artistId) => Number(artistId.trim()))
+            .filter(Boolean);
+        }
+      }
+
+      if (Array.isArray(ids)) {
         for (const artistId of ids) {
-          await client.query(
+          if (!artistId) continue;
+
+          await connection.query(
             `
             INSERT INTO event_artists
             (event_id, artist_id)
-            VALUES ($1, $2)
-            ON CONFLICT (event_id, artist_id) DO NOTHING
+            VALUES (?, ?)
             `,
             [id, artistId]
           );
@@ -425,16 +440,14 @@ const update = async (req, res) => {
       }
     }
 
-    await client.query('COMMIT');
+    await connection.commit();
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Event berhasil diperbarui',
     });
   } catch (err) {
-    if (client) {
-      await client.query('ROLLBACK').catch(() => {});
-    }
+    await connection.rollback();
 
     console.error('update event error:', err.message);
 
@@ -445,70 +458,63 @@ const update = async (req, res) => {
       });
     }
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Gagal memperbarui event',
     });
   } finally {
-    if (client) client.release();
+    connection.release();
   }
 };
 
-
-// ============================================================
-// DELETE EVENT
-// DELETE /api/events/:id
-// ============================================================
 const remove = async (req, res) => {
-  let client;
+  const connection = await db.getConnection();
 
   try {
     const { id } = req.params;
 
-    client = await db.connect();
-
-    const { rows: existing } = await client.query(
-      'SELECT id FROM events WHERE id = $1',
+    const [existing] = await connection.query(
+      'SELECT id FROM events WHERE id = ?',
       [id]
     );
 
     if (existing.length === 0) {
+      connection.release();
+
       return res.status(404).json({
         success: false,
         message: 'Event tidak ditemukan',
       });
     }
 
-    await client.query('BEGIN');
+    await connection.beginTransaction();
 
     // Hapus relasi artist
-    await client.query(
-      'DELETE FROM event_artists WHERE event_id = $1',
+    await connection.query(
+      'DELETE FROM event_artists WHERE event_id = ?',
       [id]
     );
 
     // Hapus kategori tiket
-    await client.query(
-      'DELETE FROM ticket_categories WHERE event_id = $1',
+    await connection.query(
+      'DELETE FROM ticket_categories WHERE event_id = ?',
       [id]
     );
 
     // Hapus event
-    await client.query(
-      'DELETE FROM events WHERE id = $1',
+    await connection.query(
+      'DELETE FROM events WHERE id = ?',
       [id]
     );
 
-    await client.query('COMMIT');
+    await connection.commit();
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Event berhasil dihapus',
     });
   } catch (err) {
-    if (client) {
-      await client.query('ROLLBACK').catch(() => {});
-    }
+    await connection.rollback();
 
     console.error('remove event error:', err.message);
 
@@ -521,58 +527,49 @@ const remove = async (req, res) => {
       });
     }
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Gagal menghapus event',
     });
   } finally {
-    if (client) client.release();
+    connection.release();
   }
 };
 
-
-// ============================================================
-// CLOSE EVENT
-// PATCH /api/events/:id/close
-// ============================================================
 const closeEvent = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { rowCount } = await db.query(
+    const [result] = await db.query(
       `
       UPDATE events
       SET status = 'closed'
-      WHERE id = $1
+      WHERE id = ?
       `,
       [id]
     );
 
-    if (rowCount === 0) {
+    if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
         message: 'Event tidak ditemukan',
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Event berhasil ditutup',
     });
   } catch (err) {
     console.error('close event error:', err.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Gagal menutup event',
     });
   }
 };
 
-
-// ============================================================
-// EXPORT
-// ============================================================
 module.exports = {
   getAll,
   getOne,

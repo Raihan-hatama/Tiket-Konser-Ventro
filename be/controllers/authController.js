@@ -1,17 +1,10 @@
+
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const generateToken = (user) => {
-  if (!process.env.JWT_SECRET) {
-    throw new Error(
-      'JWT_SECRET belum dikonfigurasi pada server. Isi variabel JWT_SECRET di file .env.'
-    );
-  }
-
-  return jwt.sign(
+const generateToken = (user) =>
+  jwt.sign(
     {
       id: user.id,
       email: user.email,
@@ -19,7 +12,7 @@ const generateToken = (user) => {
     },
     process.env.JWT_SECRET,
     {
-      expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+      expiresIn: process.env.JWT_EXPIRES_IN,
     }
   );
 };
@@ -27,15 +20,9 @@ const generateToken = (user) => {
 // POST /api/auth/register
 const register = async (req, res) => {
   try {
-    const name = String(req.body?.name ?? '').trim();
-    const email = String(req.body?.email ?? '').trim().toLowerCase();
-    const password = String(req.body?.password ?? '');
-    const phoneRaw = req.body?.phone;
-    const phone = phoneRaw ? String(phoneRaw).trim() : null;
+    const { name, email, password, phone } = req.body;
 
-    // ========================================================
-    // VALIDASI
-    // ========================================================
+    // Validasi
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
@@ -43,36 +30,13 @@ const register = async (req, res) => {
       });
     }
 
-    if (name.length < 2 || name.length > 100) {
-      return res.status(400).json({
-        success: false,
-        message: 'Nama harus terdiri dari 2 sampai 100 karakter',
-      });
-    }
-
-    if (!EMAIL_REGEX.test(email)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Format email tidak valid',
-      });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: 'Password minimal 6 karakter',
-      });
-    }
-
-    // ========================================================
-    // CEK EMAIL
-    // ========================================================
-    const existing = await db.query(
-      'SELECT id FROM users WHERE lower(email) = $1',
+    // Cek email
+    const [existing] = await db.query(
+      'SELECT id FROM users WHERE email = ?',
       [email]
     );
 
-    if (existing.rowCount > 0) {
+    if (existing.length > 0) {
       return res.status(409).json({
         success: false,
         message: 'Email sudah terdaftar',
@@ -84,18 +48,29 @@ const register = async (req, res) => {
     // ========================================================
     const hashed = await bcrypt.hash(password, 10);
 
-    // ========================================================
-    // SIMPAN USER
-    // ========================================================
-    const { rows } = await db.query(
+    // Role customer dibuat sebagai parameter
+    const role = 'customer';
+
+    const [result] = await db.query(
       `INSERT INTO users
-        (name, email, password, phone, role)
-       VALUES ($1, $2, $3, $4, 'customer')
-       RETURNING id, name, email, phone, role, created_at`,
-      [name, email, hashed, phone]
+      (name, email, password, phone, role)
+      VALUES (?, ?, ?, ?, ?)`,
+      [
+        name,
+        email,
+        hashed,
+        phone || null,
+        role,
+      ]
     );
 
-    const user = rows[0];
+    const user = {
+      id: result.insertId,
+      name,
+      email,
+      phone: phone || null,
+      role,
+    };
 
     const token = generateToken(user);
 
@@ -120,11 +95,10 @@ const register = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: 'Registrasi gagal diproses. Silakan coba lagi.',
+      message: err.message,
     });
   }
 };
-
 
 // POST /api/auth/login
 const login = async (req, res) => {
@@ -139,30 +113,24 @@ const login = async (req, res) => {
       });
     }
 
-    const { rows } = await db.query(
-      `SELECT
-        id,
-        name,
-        email,
-        phone,
-        role,
-        password,
-        created_at
-       FROM users
-       WHERE lower(email) = $1`,
+    const [rows] = await db.query(
+      'SELECT * FROM users WHERE email = ?',
       [email]
     );
 
-    if (rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(401).json({
         success: false,
         message: 'Email atau password salah',
       });
     }
 
-    const user = rows[0];
+    const user = result.rows[0];
 
-    const valid = await bcrypt.compare(password, user.password);
+    const valid = await bcrypt.compare(
+      password,
+      user.password
+    );
 
     if (!valid) {
       return res.status(401).json({
@@ -192,16 +160,15 @@ const login = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: 'Login gagal diproses. Silakan coba lagi.',
+      message: err.message,
     });
   }
 };
 
-
 // GET /api/auth/me
 const me = async (req, res) => {
   try {
-    const { rows } = await db.query(
+    const [rows] = await db.query(
       `SELECT
         id,
         name,
@@ -214,7 +181,7 @@ const me = async (req, res) => {
       [req.user.id]
     );
 
-    if (rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'User tidak ditemukan',
@@ -223,7 +190,7 @@ const me = async (req, res) => {
 
     return res.json({
       success: true,
-      data: rows[0],
+      data: result.rows[0],
     });
 
   } catch (err) {
@@ -231,7 +198,7 @@ const me = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: 'Gagal mengambil data user.',
+      message: err.message,
     });
   }
 };
