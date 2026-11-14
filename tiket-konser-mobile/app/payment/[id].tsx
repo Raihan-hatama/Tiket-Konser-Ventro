@@ -21,7 +21,7 @@ import {
 } from 'expo-router';
 
 import { getOrder } from '@/api/orders';
-import { api } from '../../services/api';
+import { createPayment } from '@/api/payments';
 import { formatRupiah } from '@/utils/format';
 import { Order } from '@/types';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -112,60 +112,17 @@ export default function PaymentScreen() {
     try {
       setPaying(true);
 
-      console.log(
-        '===================================='
-      );
-
-      console.log(
-        'CREATE MIDTRANS PAYMENT'
-      );
-
-      console.log(
-        'ORDER ID:',
-        order.id
-      );
-
-      console.log(
-        'METHOD:',
-        selectedMethod
-      );
-
-      console.log(
-        '===================================='
-      );
-
       // --------------------------------------------------------
       // REQUEST SNAP TOKEN SESUAI METODE
       // --------------------------------------------------------
 
-      const response =
-        await api.post(
-          `/payments/${order.id}/create-snap`,
-          {
-            payment_method:
-              selectedMethod,
-          }
-        );
-
-      console.log(
-        'CREATE SNAP RESPONSE:',
-        response.data
-      );
-
-      if (
-        !response.data?.success
-      ) {
-        throw new Error(
-          response.data?.message ||
-            'Gagal membuat pembayaran.'
-        );
-      }
-
       const {
         snap_token,
         redirect_url,
-      } =
-        response.data.data;
+      } = await createPayment(
+        order.id,
+        selectedMethod
+      );
 
       // --------------------------------------------------------
       // VALIDASI
@@ -186,11 +143,6 @@ export default function PaymentScreen() {
         `https://app.sandbox.midtrans.com/snap/v2/vtweb/${encodeURIComponent(
           snap_token
         )}`;
-
-      console.log(
-        'MIDTRANS PAYMENT URL:',
-        paymentUrl
-      );
 
       // --------------------------------------------------------
       // CEK URL

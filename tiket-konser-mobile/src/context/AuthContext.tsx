@@ -5,9 +5,8 @@ import React, {
   useState,
   useCallback,
 } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as authApi from '@/api/auth';
-import { TOKEN_KEY } from '@/api/client';
+import { getToken, removeToken, setToken } from '@/utils/tokenStorage';
 import { User } from '@/types';
 
 interface AuthContextValue {
@@ -39,13 +38,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       setUser(profile);
     } catch {
       setUser(null);
-      await AsyncStorage.removeItem(TOKEN_KEY);
+      await removeToken();
     }
   }, []);
 
   useEffect(() => {
     (async () => {
-      const token = await AsyncStorage.getItem(TOKEN_KEY);
+      const token = await getToken();
       if (token) {
         await refreshUser();
       }
@@ -55,7 +54,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const login = useCallback(async (email: string, password: string) => {
     const result = await authApi.login({ email, password });
-    await AsyncStorage.setItem(TOKEN_KEY, result.token);
+    await setToken(result.token);
     if (result.user) {
       setUser(result.user as User);
     } else {
@@ -66,14 +65,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const register = useCallback(
     async (name: string, email: string, password: string, phone?: string) => {
       const result = await authApi.register({ name, email, password, phone });
-      await AsyncStorage.setItem(TOKEN_KEY, result.token);
+      await setToken(result.token);
       await refreshUser();
     },
     [refreshUser]
   );
 
   const logout = useCallback(async () => {
-    await AsyncStorage.removeItem(TOKEN_KEY);
+    await removeToken();
     setUser(null);
   }, []);
 

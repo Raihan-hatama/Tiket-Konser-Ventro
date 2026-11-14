@@ -1,7 +1,44 @@
+const crypto = require('crypto');
 const db = require('../config/db');
 const snap = require('../config/midtrans');
 
-const BASE = process.env.BASE_URL;
+const BASE = (process.env.BASE_URL || '').replace(/\/+$/, '');
+
+// ============================================================
+// METODE PEMBAYARAN
+//
+// Mobile mengirim grup metode ("qris" / "bank" / "ewallet").
+// Backend menerjemahkannya menjadi kode metode Midtrans.
+// ============================================================
+const PAYMENT_METHOD_GROUPS = {
+  qris: ['qris'],
+  bank: ['bca_va', 'bni_va', 'bri_va', 'permata_va', 'other_va'],
+  ewallet: ['gopay', 'shopeepay'],
+};
+
+const SINGLE_PAYMENT_METHODS = [
+  'qris',
+  'gopay',
+  'shopeepay',
+  'bca_va',
+  'bni_va',
+  'bri_va',
+  'permata_va',
+  'other_va',
+  'credit_card',
+];
+
+const resolvePaymentMethods = (method) => {
+  if (PAYMENT_METHOD_GROUPS[method]) {
+    return PAYMENT_METHOD_GROUPS[method];
+  }
+
+  if (SINGLE_PAYMENT_METHODS.includes(method)) {
+    return [method];
+  }
+
+  return null;
+};
 
 // ============================================================
 // CREATE MIDTRANS PAYMENT
@@ -11,28 +48,7 @@ const BASE = process.env.BASE_URL;
 const createPayment = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { payment_method } = req.body;
-
-    console.log('====================================');
-    console.log('CREATE MIDTRANS PAYMENT');
-    console.log('ORDER ID:', orderId);
-    console.log('METHOD:', payment_method);
-    console.log('====================================');
-
-    // --------------------------------------------------------
-    // VALIDASI PAYMENT METHOD
-    // --------------------------------------------------------
-    const allowedMethods = [
-      'qris',
-      'gopay',
-      'shopeepay',
-      'bca_va',
-      'bni_va',
-      'bri_va',
-      'permata_va',
-      'other_va',
-      'credit_card',
-    ];
+    const payment_method = String(req.body?.payment_method ?? '').trim();
 
     if (!payment_method) {
       return res.status(400).json({
@@ -41,7 +57,9 @@ const createPayment = async (req, res) => {
       });
     }
 
-    if (!allowedMethods.includes(payment_method)) {
+    const enabledPayments = resolvePaymentMethods(payment_method);
+
+    if (!enabledPayments) {
       return res.status(400).json({
         success: false,
         message: 'Metode pembayaran tidak tersedia',
@@ -52,7 +70,7 @@ const createPayment = async (req, res) => {
     // CARI ORDER
     // CUSTOMER HANYA BOLEH BAYAR ORDER MILIK SENDIRI
     // --------------------------------------------------------
-    const [orders] = await db.query(
+    const { rows: orders } = await db.query(
       `
       SELECT
         o.*,
@@ -64,13 +82,10 @@ const createPayment = async (req, res) => {
         ON u.id = o.user_id
       JOIN events e
         ON e.id = o.event_id
-      WHERE o.id = ?
-        AND o.user_id = ?
+      WHERE o.id = $1
+        AND o.user_id = $2
       `,
-      [
-        orderId,
-        req.user.id,
-      ]
+      [orderId, req.user.id]
     );
 
     if (orders.length === 0) {
@@ -102,7 +117,7 @@ const createPayment = async (req, res) => {
     // --------------------------------------------------------
     // AMBIL ORDER ITEMS
     // --------------------------------------------------------
-    const [items] = await db.query(
+    const { rows: items } = await db.query(
       `
       SELECT
         oi.*,
@@ -110,7 +125,7 @@ const createPayment = async (req, res) => {
       FROM order_items oi
       JOIN ticket_categories tc
         ON tc.id = oi.ticket_category_id
-      WHERE oi.order_id = ?
+      WHERE oi.order_id = $1
       `,
       [order.id]
     );
@@ -133,11 +148,23 @@ const createPayment = async (req, res) => {
     }));
 
     // --------------------------------------------------------
+    // ID TRANSAKSI MIDTRANS
+    //
+    // Midtrans tidak mengizinkan order_id yang sama dipakai ulang
+    // untuk transaksi baru. Karena itu setiap percobaan pembayaran
+    // memakai sufiks unik, dan nilainya disimpan agar webhook bisa
+    // menemukan order yang tepat.
+    // --------------------------------------------------------
+    const midtransOrderId = `${order.order_code}-${String(
+      Date.now()
+    ).slice(-6)}`;
+
+    // --------------------------------------------------------
     // PARAMETER MIDTRANS
     // --------------------------------------------------------
     const midtransParameter = {
       transaction_details: {
-        order_id: order.order_code,
+        order_id: midtransOrderId,
         gross_amount: Number(order.total_price),
       },
 
@@ -148,84 +175,44 @@ const createPayment = async (req, res) => {
         email: order.customer_email || '',
       },
 
-      enabled_payments: [
-        payment_method,
-      ],
+      enabled_payments: enabledPayments,
     };
-
-    console.log(
-      'MIDTRANS PARAMETER:',
-      JSON.stringify(
-        midtransParameter,
-        null,
-        2
-      )
-    );
 
     // --------------------------------------------------------
     // CREATE TRANSACTION MIDTRANS
     // --------------------------------------------------------
-    const transaction =
-      await snap.createTransaction(
-        midtransParameter
-      );
+    const transaction = await snap.createTransaction(midtransParameter);
 
-    const snap_token =
-      transaction.token;
-
-    const redirect_url =
-      transaction.redirect_url;
-
-    console.log(
-      'MIDTRANS TOKEN:',
-      snap_token
-    );
-
-    console.log(
-      'MIDTRANS REDIRECT:',
-      redirect_url
-    );
+    const snap_token = transaction.token;
+    const redirect_url = transaction.redirect_url;
 
     // --------------------------------------------------------
-    // CEK PAYMENT YANG SUDAH ADA
+    // SIMPAN / UPDATE PAYMENT
     // --------------------------------------------------------
-    const [payments] = await db.query(
+    const updated = await db.query(
       `
-      SELECT *
-      FROM payments
-      WHERE order_id = ?
+      UPDATE payments
+      SET
+        payment_method = $1,
+        amount = $2,
+        snap_token = $3,
+        midtrans_order_id = $4,
+        redirect_url = $5,
+        transaction_status = 'pending',
+        status = 'pending'
+      WHERE order_id = $6
       `,
-      [order.id]
+      [
+        payment_method,
+        Number(order.total_price),
+        snap_token,
+        midtransOrderId,
+        redirect_url,
+        order.id,
+      ]
     );
 
-    if (payments.length > 0) {
-      // ------------------------------------------------------
-      // UPDATE PAYMENT
-      // ------------------------------------------------------
-      await db.query(
-        `
-        UPDATE payments
-        SET
-          payment_method = ?,
-          amount = ?,
-          snap_token = ?,
-          midtrans_order_id = ?,
-          transaction_status = 'pending',
-          status = 'pending'
-        WHERE order_id = ?
-        `,
-        [
-          payment_method,
-          Number(order.total_price),
-          snap_token,
-          order.order_code,
-          order.id,
-        ]
-      );
-    } else {
-      // ------------------------------------------------------
-      // INSERT PAYMENT
-      // ------------------------------------------------------
+    if (updated.rowCount === 0) {
       await db.query(
         `
         INSERT INTO payments
@@ -236,16 +223,18 @@ const createPayment = async (req, res) => {
           status,
           snap_token,
           midtrans_order_id,
-          transaction_status
+          transaction_status,
+          redirect_url
         )
-        VALUES (?, ?, ?, 'pending', ?, ?, 'pending')
+        VALUES ($1, $2, $3, 'pending', $4, $5, 'pending', $6)
         `,
         [
           order.id,
           payment_method,
           Number(order.total_price),
           snap_token,
-          order.order_code,
+          midtransOrderId,
+          redirect_url,
         ]
       );
     }
@@ -267,16 +256,11 @@ const createPayment = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(
-      'CREATE PAYMENT ERROR:',
-      err
-    );
+    console.error('CREATE PAYMENT ERROR:', err.message);
 
     return res.status(500).json({
       success: false,
-      message:
-        err?.message ||
-        'Gagal membuat pembayaran Midtrans',
+      message: 'Gagal membuat pembayaran Midtrans. Silakan coba lagi.',
     });
   }
 };
@@ -288,31 +272,16 @@ const createPayment = async (req, res) => {
 // TIDAK MEMAKAI AUTHENTICATE
 // ============================================================
 const webhook = async (req, res) => {
+  let client;
+
   try {
-    const notification = req.body;
-
-    console.log(
-      '===================================='
-    );
-
-    console.log(
-      'MIDTRANS NOTIFICATION'
-    );
-
-    console.log(
-      JSON.stringify(
-        notification,
-        null,
-        2
-      )
-    );
-
-    console.log(
-      '===================================='
-    );
+    const notification = req.body || {};
 
     const {
       order_id,
+      status_code,
+      gross_amount,
+      signature_key,
       transaction_id,
       transaction_status,
       payment_type,
@@ -327,13 +296,58 @@ const webhook = async (req, res) => {
     }
 
     // --------------------------------------------------------
-    // CARI ORDER
+    // VERIFIKASI SIGNATURE MIDTRANS
+    // sha512(order_id + status_code + gross_amount + server_key)
     // --------------------------------------------------------
-    const [orders] = await db.query(
+    const serverKey = process.env.MIDTRANS_SERVER_KEY;
+
+    if (!serverKey) {
+      console.error(
+        'WEBHOOK ERROR: MIDTRANS_SERVER_KEY belum dikonfigurasi'
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: 'Konfigurasi pembayaran belum lengkap',
+      });
+    }
+
+    const expectedSignature = crypto
+      .createHash('sha512')
+      .update(
+        `${order_id}${status_code ?? ''}${gross_amount ?? ''}${serverKey}`
+      )
+      .digest('hex');
+
+    if (
+      !signature_key ||
+      expectedSignature.length !== String(signature_key).length ||
+      !crypto.timingSafeEqual(
+        Buffer.from(expectedSignature),
+        Buffer.from(String(signature_key))
+      )
+    ) {
+      console.error('WEBHOOK ERROR: signature tidak valid');
+
+      return res.status(401).json({
+        success: false,
+        message: 'Signature tidak valid',
+      });
+    }
+
+    // --------------------------------------------------------
+    // CARI ORDER (berdasarkan midtrans_order_id atau order_code)
+    // --------------------------------------------------------
+    const { rows: orders } = await db.query(
       `
-      SELECT *
-      FROM orders
-      WHERE order_code = ?
+      SELECT o.*
+      FROM orders o
+      LEFT JOIN payments p
+        ON p.order_id = o.id
+      WHERE p.midtrans_order_id = $1
+         OR o.order_code = $1
+      ORDER BY o.id DESC
+      LIMIT 1
       `,
       [order_id]
     );
@@ -348,22 +362,60 @@ const webhook = async (req, res) => {
     const order = orders[0];
 
     // --------------------------------------------------------
+    // VALIDASI NOMINAL
+    // --------------------------------------------------------
+    if (
+      gross_amount !== undefined &&
+      Math.abs(Number(gross_amount) - Number(order.total_price)) > 0.01
+    ) {
+      console.error('WEBHOOK ERROR: nominal tidak sesuai');
+
+      return res.status(400).json({
+        success: false,
+        message: 'Nominal pembayaran tidak sesuai dengan pesanan',
+      });
+    }
+
+    // --------------------------------------------------------
     // TENTUKAN STATUS
     // --------------------------------------------------------
-    let paymentStatus = 'pending';
-    let orderStatus = 'pending';
-
     const successPayment =
       transaction_status === 'settlement' ||
-      (
-        transaction_status === 'capture' &&
-        fraud_status !== 'challenge'
-      );
+      (transaction_status === 'capture' && fraud_status !== 'challenge');
 
     const failedPayment =
       transaction_status === 'cancel' ||
       transaction_status === 'deny' ||
       transaction_status === 'expire';
+
+    // --------------------------------------------------------
+    // IDEMPOTENSI
+    // Notifikasi yang sama tidak boleh memproses order dua kali.
+    // --------------------------------------------------------
+    if (successPayment && order.status === 'paid') {
+      return res.json({
+        success: true,
+        message: 'Pembayaran sudah diproses sebelumnya',
+      });
+    }
+
+    if (failedPayment && order.status === 'cancelled') {
+      return res.json({
+        success: true,
+        message: 'Pembatalan sudah diproses sebelumnya',
+      });
+    }
+
+    // Jangan menurunkan status order yang sudah lunas.
+    if (failedPayment && order.status === 'paid') {
+      return res.json({
+        success: true,
+        message: 'Order sudah lunas, notifikasi pembatalan diabaikan',
+      });
+    }
+
+    let paymentStatus = 'pending';
+    let orderStatus = 'pending';
 
     if (successPayment) {
       paymentStatus = 'verified';
@@ -375,124 +427,145 @@ const webhook = async (req, res) => {
       orderStatus = 'cancelled';
     }
 
+    client = await db.connect();
+    await client.query('BEGIN');
+
     // --------------------------------------------------------
     // UPDATE PAYMENT
     // --------------------------------------------------------
-    await db.query(
+    const paymentUpdate = await client.query(
       `
       UPDATE payments
       SET
-        payment_type = ?,
-        transaction_id = ?,
-        transaction_status = ?,
-        status = ?,
-        paid_at = ?
-      WHERE order_id = ?
+        payment_type = $1,
+        transaction_id = $2,
+        transaction_status = $3,
+        status = $4,
+        paid_at = $5
+      WHERE order_id = $6
       `,
       [
         payment_type || null,
         transaction_id || null,
         transaction_status || null,
         paymentStatus,
-        paymentStatus === 'verified'
-          ? new Date()
-          : null,
+        paymentStatus === 'verified' ? new Date() : null,
         order.id,
       ]
     );
+
+    if (paymentUpdate.rowCount === 0) {
+      await client.query(
+        `
+        INSERT INTO payments
+        (
+          order_id,
+          payment_method,
+          amount,
+          status,
+          payment_type,
+          transaction_id,
+          transaction_status,
+          paid_at
+        )
+        VALUES ($1, 'midtrans', $2, $3, $4, $5, $6, $7)
+        `,
+        [
+          order.id,
+          Number(order.total_price),
+          paymentStatus,
+          payment_type || null,
+          transaction_id || null,
+          transaction_status || null,
+          paymentStatus === 'verified' ? new Date() : null,
+        ]
+      );
+    }
 
     // --------------------------------------------------------
     // UPDATE ORDER
     // --------------------------------------------------------
-    await db.query(
+    await client.query(
       `
       UPDATE orders
-      SET status = ?
-      WHERE id = ?
+      SET status = $1
+      WHERE id = $2
       `,
-      [
-        orderStatus,
-        order.id,
-      ]
+      [orderStatus, order.id]
     );
 
     // --------------------------------------------------------
-    // JIKA BERHASIL BAYAR
-    // TIKET PENDING -> ACTIVE
+    // JIKA BERHASIL BAYAR: TIKET PENDING -> ACTIVE
     // --------------------------------------------------------
     if (orderStatus === 'paid') {
-      await db.query(
+      await client.query(
         `
         UPDATE tickets t
-        JOIN order_items oi
-          ON oi.id = t.order_item_id
-        SET t.status = 'active'
-        WHERE oi.order_id = ?
+        SET status = 'active'
+        FROM order_items oi
+        WHERE oi.id = t.order_item_id
+          AND oi.order_id = $1
         `,
         [order.id]
       );
     }
 
     // --------------------------------------------------------
-    // JIKA GAGAL / EXPIRED
-    // KEMBALIKAN STOK
+    // JIKA GAGAL / EXPIRED: KEMBALIKAN STOK + BATALKAN TIKET
     // --------------------------------------------------------
     if (orderStatus === 'cancelled') {
-      const [items] = await db.query(
+      const { rows: items } = await client.query(
         `
         SELECT *
         FROM order_items
-        WHERE order_id = ?
+        WHERE order_id = $1
         `,
         [order.id]
       );
 
       for (const item of items) {
-        await db.query(
+        await client.query(
           `
           UPDATE ticket_categories
-          SET sold =
-            GREATEST(
-              sold - ?,
-              0
-            )
-          WHERE id = ?
+          SET sold = GREATEST(sold - $1, 0)
+          WHERE id = $2
           `,
-          [
-            item.quantity,
-            item.ticket_category_id,
-          ]
+          [item.quantity, item.ticket_category_id]
         );
       }
 
-      await db.query(
+      await client.query(
         `
         UPDATE tickets t
-        JOIN order_items oi
-          ON oi.id = t.order_item_id
-        SET t.status = 'cancelled'
-        WHERE oi.order_id = ?
+        SET status = 'cancelled'
+        FROM order_items oi
+        WHERE oi.id = t.order_item_id
+          AND oi.order_id = $1
         `,
         [order.id]
       );
     }
 
+    await client.query('COMMIT');
+
     return res.json({
       success: true,
-      message:
-        'Notification Midtrans berhasil diproses',
+      message: 'Notification Midtrans berhasil diproses',
     });
 
   } catch (err) {
-    console.error(
-      'MIDTRANS WEBHOOK ERROR:',
-      err
-    );
+    if (client) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+
+    console.error('MIDTRANS WEBHOOK ERROR:', err.message);
 
     return res.status(500).json({
       success: false,
-      message: err.message,
+      message: 'Gagal memproses notifikasi pembayaran',
     });
+  } finally {
+    if (client) client.release();
   }
 };
 
@@ -503,7 +576,7 @@ const webhook = async (req, res) => {
 // ============================================================
 const getOne = async (req, res) => {
   try {
-    const [rows] = await db.query(
+    const { rows } = await db.query(
       `
       SELECT
         p.*,
@@ -518,7 +591,7 @@ const getOne = async (req, res) => {
         ON o.id = p.order_id
       JOIN events e
         ON e.id = o.event_id
-      WHERE p.id = ?
+      WHERE p.id = $1
       `,
       [req.params.id]
     );
@@ -549,14 +622,11 @@ const getOne = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(
-      'GET PAYMENT ERROR:',
-      err
-    );
+    console.error('GET PAYMENT ERROR:', err.message);
 
     return res.status(500).json({
       success: false,
-      message: err.message,
+      message: 'Gagal mengambil data pembayaran',
     });
   }
 };
@@ -568,7 +638,7 @@ const getOne = async (req, res) => {
 // ============================================================
 const getAll = async (req, res) => {
   try {
-    const [rows] = await db.query(
+    const { rows } = await db.query(
       `
       SELECT
         p.*,
@@ -593,92 +663,98 @@ const getAll = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(
-      'GET ALL PAYMENT ERROR:',
-      err
-    );
+    console.error('GET ALL PAYMENT ERROR:', err.message);
 
     return res.status(500).json({
       success: false,
-      message: err.message,
+      message: 'Gagal mengambil data pembayaran',
     });
   }
 };
 
 
 // ============================================================
-// UPLOAD BUKTI LAMA
+// UPLOAD BUKTI (LEGACY / FALLBACK)
 // ============================================================
 const uploadProof = async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({
         success: false,
-        message:
-          'File bukti transfer wajib diupload',
+        message: 'File bukti transfer wajib diupload',
       });
     }
 
-    const { orderId } =
-      req.params;
+    const { orderId } = req.params;
 
-    const [orders] =
-      await db.query(
-        `
-        SELECT *
-        FROM orders
-        WHERE id = ?
-          AND user_id = ?
-        `,
-        [
-          orderId,
-          req.user.id,
-        ]
-      );
+    const { rows: orders } = await db.query(
+      `
+      SELECT *
+      FROM orders
+      WHERE id = $1
+        AND user_id = $2
+      `,
+      [orderId, req.user.id]
+    );
 
     if (orders.length === 0) {
       return res.status(404).json({
         success: false,
-        message:
-          'Pesanan tidak ditemukan',
+        message: 'Pesanan tidak ditemukan',
       });
     }
 
-    const proof_url =
-      `${BASE}/uploads/payments/${req.file.filename}`;
+    const proof_url = BASE
+      ? `${BASE}/uploads/payments/${req.file.filename}`
+      : `/uploads/payments/${req.file.filename}`;
 
-    await db.query(
+    const { rowCount } = await db.query(
       `
       UPDATE payments
-      SET proof_url = ?
-      WHERE order_id = ?
+      SET proof_url = $1
+      WHERE order_id = $2
       `,
-      [
-        proof_url,
-        orderId,
-      ]
+      [proof_url, orderId]
     );
+
+    if (rowCount === 0) {
+      await db.query(
+        `
+        INSERT INTO payments
+        (
+          order_id,
+          payment_method,
+          amount,
+          status,
+          proof_url
+        )
+        VALUES ($1, 'transfer', $2, 'pending', $3)
+        `,
+        [orderId, Number(orders[0].total_price), proof_url]
+      );
+    }
 
     return res.json({
       success: true,
-      message:
-        'Bukti transfer berhasil diupload',
+      message: 'Bukti transfer berhasil diupload',
       data: {
         proof_url,
       },
     });
 
   } catch (err) {
+    console.error('UPLOAD PROOF ERROR:', err.message);
+
     return res.status(500).json({
       success: false,
-      message: err.message,
+      message: 'Gagal mengupload bukti transfer',
     });
   }
 };
 
 
 // ============================================================
-// VERIFY MANUAL LAMA
+// VERIFY MANUAL (TIDAK DIGUNAKAN PADA MIDTRANS)
 // ============================================================
 const verify = async (req, res) => {
   return res.status(400).json({

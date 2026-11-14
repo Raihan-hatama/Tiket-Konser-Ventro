@@ -1,4 +1,5 @@
 import api from './client';
+import { API_BASE_URL } from '@/config';
 import type {
   EventItem,
   TicketCategory,
@@ -9,6 +10,19 @@ export interface EventDetail extends EventItem {
   artists?: Artist[];
   categories?: TicketCategory[];
 }
+
+// Backend menyimpan poster/photo sebagai path relatif (mis. "/uploads/...").
+// React Native butuh URL absolut, jadi path digabung dengan origin API.
+const API_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, '');
+
+export const resolveAssetUrl = (
+  url?: string | null
+): string | null => {
+  if (!url) return null;
+  if (/^https?:\/\//i.test(url)) return url;
+
+  return `${API_ORIGIN}${url.startsWith('/') ? '' : '/'}${url}`;
+};
 
 /**
  * Mengambil semua event
@@ -34,6 +48,8 @@ export const getEvents = async (): Promise<EventDetail[]> => {
         : null,
 
     status: String(event.status),
+
+    poster_url: resolveAssetUrl(event.poster_url),
 
     categories: Array.isArray(event.categories)
       ? event.categories.map((category: any) => ({
@@ -62,7 +78,7 @@ export const getEvents = async (): Promise<EventDetail[]> => {
           id: Number(artist.id),
           name: String(artist.name),
           bio: artist.bio ?? null,
-          photo_url: artist.photo_url ?? null,
+          photo_url: resolveAssetUrl(artist.photo_url),
         }))
       : [],
   }));
@@ -95,6 +111,8 @@ export const getEvent = async (
 
     status: String(event.status),
 
+    poster_url: resolveAssetUrl(event.poster_url),
+
     categories: Array.isArray(event.categories)
       ? event.categories.map((category: any) => ({
           ...category,
@@ -122,7 +140,7 @@ export const getEvent = async (
           id: Number(artist.id),
           name: String(artist.name),
           bio: artist.bio ?? null,
-          photo_url: artist.photo_url ?? null,
+          photo_url: resolveAssetUrl(artist.photo_url),
         }))
       : [],
   };

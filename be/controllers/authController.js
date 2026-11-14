@@ -2,8 +2,16 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 
-const generateToken = (user) =>
-  jwt.sign(
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const generateToken = (user) => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error(
+      'JWT_SECRET belum dikonfigurasi pada server. Isi variabel JWT_SECRET di file .env.'
+    );
+  }
+
+  return jwt.sign(
     {
       id: user.id,
       email: user.email,
@@ -11,16 +19,23 @@ const generateToken = (user) =>
     },
     process.env.JWT_SECRET,
     {
-      expiresIn: process.env.JWT_EXPIRES_IN,
+      expiresIn: process.env.JWT_EXPIRES_IN || '7d',
     }
   );
+};
 
 // POST /api/auth/register
 const register = async (req, res) => {
   try {
-    const { name, email, password, phone } = req.body;
+    const name = String(req.body?.name ?? '').trim();
+    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    const password = String(req.body?.password ?? '');
+    const phoneRaw = req.body?.phone;
+    const phone = phoneRaw ? String(phoneRaw).trim() : null;
 
-    // Validasi
+    // ========================================================
+    // VALIDASI
+    // ========================================================
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
@@ -28,45 +43,59 @@ const register = async (req, res) => {
       });
     }
 
-    // Cek email
-    const [existing] = await db.query(
-      'SELECT id FROM users WHERE email = ?',
+    if (name.length < 2 || name.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nama harus terdiri dari 2 sampai 100 karakter',
+      });
+    }
+
+    if (!EMAIL_REGEX.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Format email tidak valid',
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password minimal 6 karakter',
+      });
+    }
+
+    // ========================================================
+    // CEK EMAIL
+    // ========================================================
+    const existing = await db.query(
+      'SELECT id FROM users WHERE lower(email) = $1',
       [email]
     );
 
-    if (existing.length > 0) {
+    if (existing.rowCount > 0) {
       return res.status(409).json({
         success: false,
         message: 'Email sudah terdaftar',
       });
     }
 
-    // Hash password
+    // ========================================================
+    // HASH PASSWORD
+    // ========================================================
     const hashed = await bcrypt.hash(password, 10);
 
-    // Role customer dibuat sebagai parameter
-    const role = 'customer';
-
-    const [result] = await db.query(
+    // ========================================================
+    // SIMPAN USER
+    // ========================================================
+    const { rows } = await db.query(
       `INSERT INTO users
-      (name, email, password, phone, role)
-      VALUES (?, ?, ?, ?, ?)`,
-      [
-        name,
-        email,
-        hashed,
-        phone || null,
-        role,
-      ]
+        (name, email, password, phone, role)
+       VALUES ($1, $2, $3, $4, 'customer')
+       RETURNING id, name, email, phone, role, created_at`,
+      [name, email, hashed, phone]
     );
 
-    const user = {
-      id: result.insertId,
-      name,
-      email,
-      phone: phone || null,
-      role,
-    };
+    const user = rows[0];
 
     const token = generateToken(user);
 
@@ -78,11 +107,20 @@ const register = async (req, res) => {
     });
 
   } catch (err) {
-    console.error('REGISTER ERROR:', err);
+    // 23505 = unique_violation (email sudah dipakai, bisa terjadi jika
+    // ada dua request registrasi bersamaan).
+    if (err.code === '23505') {
+      return res.status(409).json({
+        success: false,
+        message: 'Email sudah terdaftar',
+      });
+    }
+
+    console.error('REGISTER ERROR:', err.message);
 
     return res.status(500).json({
       success: false,
-      message: err.message,
+      message: 'Registrasi gagal diproses. Silakan coba lagi.',
     });
   }
 };
@@ -91,7 +129,8 @@ const register = async (req, res) => {
 // POST /api/auth/login
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    const password = String(req.body?.password ?? '');
 
     if (!email || !password) {
       return res.status(400).json({
@@ -100,8 +139,17 @@ const login = async (req, res) => {
       });
     }
 
-    const [rows] = await db.query(
-      'SELECT * FROM users WHERE email = ?',
+    const { rows } = await db.query(
+      `SELECT
+        id,
+        name,
+        email,
+        phone,
+        role,
+        password,
+        created_at
+       FROM users
+       WHERE lower(email) = $1`,
       [email]
     );
 
@@ -114,10 +162,7 @@ const login = async (req, res) => {
 
     const user = rows[0];
 
-    const valid = await bcrypt.compare(
-      password,
-      user.password
-    );
+    const valid = await bcrypt.compare(password, user.password);
 
     if (!valid) {
       return res.status(401).json({
@@ -138,15 +183,16 @@ const login = async (req, res) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        created_at: user.created_at,
       },
     });
 
   } catch (err) {
-    console.error('LOGIN ERROR:', err);
+    console.error('LOGIN ERROR:', err.message);
 
     return res.status(500).json({
       success: false,
-      message: err.message,
+      message: 'Login gagal diproses. Silakan coba lagi.',
     });
   }
 };
@@ -155,7 +201,7 @@ const login = async (req, res) => {
 // GET /api/auth/me
 const me = async (req, res) => {
   try {
-    const [rows] = await db.query(
+    const { rows } = await db.query(
       `SELECT
         id,
         name,
@@ -163,8 +209,8 @@ const me = async (req, res) => {
         phone,
         role,
         created_at
-      FROM users
-      WHERE id = ?`,
+       FROM users
+       WHERE id = $1`,
       [req.user.id]
     );
 
@@ -181,11 +227,11 @@ const me = async (req, res) => {
     });
 
   } catch (err) {
-    console.error('ME ERROR:', err);
+    console.error('ME ERROR:', err.message);
 
     return res.status(500).json({
       success: false,
-      message: err.message,
+      message: 'Gagal mengambil data user.',
     });
   }
 };

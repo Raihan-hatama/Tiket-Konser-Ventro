@@ -4,9 +4,11 @@ import { useAuth } from '@/context/AuthContext';
 import LoadingScreen from '@/components/LoadingScreen';
 
 export default function Index() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isLoading } = useAuth();
 
   if (isLoading) return <LoadingScreen />;
 
-  return <Redirect href={isAuthenticated ? '/(tabs)' : '/(auth)/login'} />;
+  // Pengguna dapat melihat daftar event tanpa harus login.
+  // Login/registrasi diminta saat mengakses pesanan, profil, atau checkout.
+  return <Redirect href="/(tabs)" />;
 }

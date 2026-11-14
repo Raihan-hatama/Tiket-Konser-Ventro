@@ -47,7 +47,7 @@ app.use('/api', routes);
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'Tiket Konser API berjalan 🎵',
+    message: 'Tiket Konser API berjalan',
   });
 });
 
@@ -67,13 +67,34 @@ app.use((req, res) => {
 // ============================================================
 
 app.use((err, req, res, next) => {
-  console.error('SERVER ERROR:', err);
+  // Body JSON yang tidak valid
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      success: false,
+      message: 'Format JSON pada request tidak valid',
+    });
+  }
+
+  // Error dari multer (ukuran / tipe file)
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({
+      success: false,
+      message: 'Ukuran file maksimal 5 MB',
+    });
+  }
+
+  if (err.message === 'Hanya file gambar (jpg/png) yang diizinkan') {
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+
+  console.error('SERVER ERROR:', err.message);
 
   res.status(500).json({
     success: false,
-    message:
-      err.message ||
-      'Internal server error',
+    message: 'Internal server error',
   });
 });
 

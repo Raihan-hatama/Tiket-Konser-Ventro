@@ -6,27 +6,27 @@ const getDashboard = async (req, res) => {
     // TOTAL DATA
     // =========================
 
-    const [[{ total_events }]] = await db.query(
-      "SELECT COUNT(*) AS total_events FROM events"
+    const totalEvents = await db.query(
+      "SELECT COUNT(*) AS total FROM events"
     );
 
-    const [[{ total_artists }]] = await db.query(
-      "SELECT COUNT(*) AS total_artists FROM artists"
+    const totalArtists = await db.query(
+      "SELECT COUNT(*) AS total FROM artists"
     );
 
-    const [[{ total_orders }]] = await db.query(
-      "SELECT COUNT(*) AS total_orders FROM orders"
+    const totalOrders = await db.query(
+      "SELECT COUNT(*) AS total FROM orders"
     );
 
-    const [[{ total_payments }]] = await db.query(
-      "SELECT COUNT(*) AS total_payments FROM payments"
+    const totalPayments = await db.query(
+      "SELECT COUNT(*) AS total FROM payments"
     );
 
     // =========================
     // TOTAL REVENUE
     // =========================
 
-    const [[{ total_revenue }]] = await db.query(`
+    const revenue = await db.query(`
       SELECT COALESCE(SUM(amount), 0) AS total_revenue
       FROM payments
       WHERE status = 'verified'
@@ -36,7 +36,7 @@ const getDashboard = async (req, res) => {
     // TIKET PER EVENT
     // =========================
 
-    const [tickets_per_event] = await db.query(`
+    const ticketsPerEvent = await db.query(`
       SELECT
         e.id,
         e.title,
@@ -53,7 +53,7 @@ const getDashboard = async (req, res) => {
     // PESANAN TERBARU
     // =========================
 
-    const [recent_orders] = await db.query(`
+    const recentOrders = await db.query(`
       SELECT
         o.id,
         o.order_code,
@@ -71,47 +71,29 @@ const getDashboard = async (req, res) => {
       LIMIT 10
     `);
 
-    // =========================
-    // DEBUG
-    // =========================
-
-    console.log("DASHBOARD DATA:");
-    console.log({
-      total_events,
-      total_artists,
-      total_orders,
-      total_payments,
-      total_revenue,
-    });
-
-    // =========================
-    // RESPONSE
-    // =========================
+    const summary = {
+      total_events: totalEvents.rows[0].total,
+      total_artists: totalArtists.rows[0].total,
+      total_orders: totalOrders.rows[0].total,
+      total_payments: totalPayments.rows[0].total,
+      total_revenue: revenue.rows[0].total_revenue,
+    };
 
     res.json({
       success: true,
       data: {
-        summary: {
-          total_events,
-          total_artists,
-          total_orders,
-          total_payments,
-          total_revenue,
-        },
-
-        tickets_per_event,
-
-        recent_orders,
+        summary,
+        tickets_per_event: ticketsPerEvent.rows,
+        recent_orders: recentOrders.rows,
       },
     });
 
   } catch (err) {
-    console.error("DASHBOARD ERROR:");
-    console.error(err);
+    console.error("DASHBOARD ERROR:", err.message);
 
     res.status(500).json({
       success: false,
-      message: err.message,
+      message: "Gagal mengambil data dashboard",
     });
   }
 };

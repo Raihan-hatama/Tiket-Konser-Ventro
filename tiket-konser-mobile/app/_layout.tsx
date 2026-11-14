@@ -58,6 +58,20 @@ export default function RootLayout() {
                 title: "Detail Pesanan",
               }}
             />
+
+            <Stack.Screen
+              name="order/payment"
+              options={{
+                title: "Pembayaran",
+              }}
+            />
+
+            <Stack.Screen
+              name="payment/[id]"
+              options={{
+                title: "Pembayaran",
+              }}
+            />
           </Stack>
         </CartProvider>
       </AuthProvider>

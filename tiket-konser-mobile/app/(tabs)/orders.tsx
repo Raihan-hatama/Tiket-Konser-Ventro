@@ -75,7 +75,52 @@ export default function OrdersScreen() {
     );
   }
 
-  // lanjutkan return UI kamu...
+  return (
+    <View style={styles.screen}>
+      <FlatList
+        data={orders}
+        keyExtractor={(item) => String(item.id)}
+        contentContainerStyle={styles.listContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        ListHeaderComponent={
+          <View style={styles.header}>
+            <Text style={styles.headerTitle}>Pesanan Saya</Text>
+          </View>
+        }
+        ListEmptyComponent={
+          error ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : (
+            <Text style={styles.empty}>
+              Belum ada pesanan. Yuk pilih tiket konser favoritmu!
+            </Text>
+          )
+        }
+        renderItem={({ item }) => (
+          <Pressable
+            style={styles.card}
+            onPress={() => router.push(`/order/${item.id}`)}
+          >
+            <View style={styles.cardTop}>
+              <Text style={styles.orderCode}>{item.order_code}</Text>
+              <StatusBadge status={item.status} />
+            </View>
+
+            <Text style={styles.eventTitle}>{item.event_title || 'Event'}</Text>
+
+            <View style={styles.cardBottom}>
+              <Text style={styles.date}>{formatDate(item.created_at)}</Text>
+              <Text style={styles.price}>{formatRupiah(item.total_price)}</Text>
+            </View>
+          </Pressable>
+        )}
+      />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({

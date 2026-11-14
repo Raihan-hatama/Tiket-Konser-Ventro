@@ -13,6 +13,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 import { getEvent } from '@/api/events';
+import { useAuth } from '@/context/AuthContext';
 import { useCart } from '@/context/CartContext';
 import { EventItem, TicketCategory, CartItem } from '@/types';
 
@@ -21,6 +22,7 @@ export default function EventDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const { setCheckout } = useCart();
+  const { isAuthenticated } = useAuth();
 
   const [event, setEventData] = useState<EventItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -126,6 +128,21 @@ export default function EventDetailScreen() {
       Alert.alert(
         'Pilih tiket',
         'Silakan pilih minimal satu tiket terlebih dahulu.'
+      );
+      return;
+    }
+
+    if (!isAuthenticated) {
+      Alert.alert(
+        'Masuk diperlukan',
+        'Silakan masuk atau daftar terlebih dahulu untuk membeli tiket.',
+        [
+          { text: 'Batal', style: 'cancel' },
+          {
+            text: 'Masuk',
+            onPress: () => router.push('/(auth)/login'),
+          },
+        ]
       );
       return;
     }

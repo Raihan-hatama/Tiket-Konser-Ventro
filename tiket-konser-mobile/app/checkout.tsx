@@ -55,8 +55,7 @@ const result = await createOrder({
 clear();
 
 // Arahkan ke halaman pilihan pembayaran
-router.push(`/order/payment?orderId=${result.order_id}`);
-      router.replace(`/payment/${result.order_id}`);
+router.replace(`/payment/${result.order_id}`);
     } catch (error: any) {
       Alert.alert(
         'Checkout gagal',
