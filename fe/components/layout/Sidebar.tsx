@@ -10,6 +10,7 @@ import {
   Ticket,
   ShoppingCart,
   CreditCard,
+  ScanLine,
   LogOut,
 } from "lucide-react";
 
@@ -20,6 +21,7 @@ const menus = [
   { code: "04", title: "Categories", href: "/categories", icon: Ticket },
   { code: "05", title: "Orders", href: "/orders", icon: ShoppingCart },
   { code: "06", title: "Payments", href: "/payments", icon: CreditCard },
+  { code: "07", title: "Scan Ticket", href: "/scan-ticket", icon: ScanLine },
 ];
 
 export default function Sidebar() {

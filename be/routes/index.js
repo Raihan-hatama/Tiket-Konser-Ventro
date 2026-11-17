@@ -31,6 +31,9 @@ const orderCtrl =
 const paymentCtrl =
   require('../controllers/paymentController');
 
+const ticketCtrl =
+  require('../controllers/ticketController');
+
 const dashboardCtrl =
   require('../controllers/dashboardController');
 
@@ -207,6 +210,41 @@ router.get(
   '/orders/:id',
   authenticate,
   orderCtrl.getOne
+);
+
+
+// ============================================================
+// TICKETS
+// ============================================================
+
+// Tiket milik user yang sedang login.
+router.get(
+  '/tickets/my',
+  authenticate,
+  ticketCtrl.getMy
+);
+
+// Scanner admin: validasi tanpa mengubah status.
+router.post(
+  '/tickets/validate',
+  authenticate,
+  adminOnly,
+  ticketCtrl.validate
+);
+
+// Scanner admin: check-in atomik (satu tiket hanya sekali).
+router.post(
+  '/tickets/check-in',
+  authenticate,
+  adminOnly,
+  ticketCtrl.checkIn
+);
+
+// Detail tiket (pemilik atau admin).
+router.get(
+  '/tickets/:id',
+  authenticate,
+  ticketCtrl.getOne
 );
 
 

@@ -1,12 +1,5 @@
 const db = require('../config/db');
-const QRCode = require('qrcode');
 const { v4: uuidv4 } = require('uuid');
-const path = require('path');
-const fs = require('fs');
-
-const BASE = (process.env.BASE_URL || '').replace(/\/+$/, '');
-
-const QR_DIR = path.join(__dirname, '..', 'uploads', 'qrcodes');
 
 // Error dengan status HTTP agar bisa dibedakan dari error tak terduga.
 class HttpError extends Error {
@@ -25,12 +18,6 @@ const generateOrderCode = () => {
   const suffix = uuidv4().slice(0, 6).toUpperCase();
 
   return `ORD-${date}-${suffix}`;
-};
-
-const ensureQrDir = () => {
-  if (!fs.existsSync(QR_DIR)) {
-    fs.mkdirSync(QR_DIR, { recursive: true });
-  }
 };
 
 // ============================================================
@@ -178,14 +165,13 @@ const create = async (req, res) => {
     const order_id = order.id;
 
     // --------------------------------------------------------
-    // BUAT ORDER ITEMS + TIKET
+    // BUAT ORDER ITEMS
+    //
+    // Tiket TIDAK dibuat di sini. Kode tiket + QR baru dibuat oleh
+    // webhook Midtrans setelah pembayaran benar-benar terkonfirmasi.
     // --------------------------------------------------------
-    if (!fs.existsSync(QR_DIR)) {
-      ensureQrDir();
-    }
-
     for (const item of validatedItems) {
-      const { rows: itemRows } = await conn.query(
+      await conn.query(
         `
         INSERT INTO order_items
         (
@@ -195,46 +181,9 @@ const create = async (req, res) => {
           unit_price
         )
         VALUES ($1, $2, $3, $4)
-        RETURNING id
         `,
         [order_id, item.ticket_category_id, item.quantity, item.price]
       );
-
-      const order_item_id = itemRows[0].id;
-
-      // ------------------------------------------------------
-      // GENERATE TIKET
-      // STATUS = pending
-      // BARU AKTIF SETELAH PEMBAYARAN BERHASIL
-      // ------------------------------------------------------
-      for (let i = 0; i < item.quantity; i += 1) {
-        const ticket_code = `TIK-${uuidv4()
-          .slice(0, 8)
-          .toUpperCase()}`;
-
-        const qr_filename = `${ticket_code}.png`;
-        const qr_path = path.join(QR_DIR, qr_filename);
-
-        await QRCode.toFile(qr_path, ticket_code, { width: 300 });
-
-        const qr_code_url = BASE
-          ? `${BASE}/uploads/qrcodes/${qr_filename}`
-          : `/uploads/qrcodes/${qr_filename}`;
-
-        await conn.query(
-          `
-          INSERT INTO tickets
-          (
-            order_item_id,
-            ticket_code,
-            qr_code_url,
-            status
-          )
-          VALUES ($1, $2, $3, 'pending')
-          `,
-          [order_item_id, ticket_code, qr_code_url]
-        );
-      }
     }
 
     // --------------------------------------------------------
@@ -362,7 +311,12 @@ const getOne = async (req, res) => {
       SELECT
         o.*,
         u.name AS customer_name,
-        e.title AS event_title
+        e.title AS event_title,
+        e.poster_url AS event_poster_url,
+        e.event_date,
+        e.event_time,
+        e.venue,
+        e.status AS event_status
       FROM orders o
       JOIN users u
         ON u.id = o.user_id
@@ -404,9 +358,12 @@ const getOne = async (req, res) => {
         COALESCE(
           json_agg(
             json_build_object(
+              'id', t.id,
               'ticket_code', t.ticket_code,
               'qr_code_url', t.qr_code_url,
-              'status', t.status
+              'status', t.status,
+              'used_at', t.used_at,
+              'created_at', t.created_at
             )
             ORDER BY t.id
           ) FILTER (WHERE t.id IS NOT NULL),

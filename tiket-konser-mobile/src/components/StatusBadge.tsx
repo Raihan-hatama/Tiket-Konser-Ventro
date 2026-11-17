@@ -3,6 +3,8 @@ import { StyleSheet, Text, View } from 'react-native';
 
 const COLORS: Record<string, { bg: string; fg: string; label: string }> = {
   pending: { bg: '#FEF3C7', fg: '#92400E', label: 'Menunggu' },
+  active: { bg: '#D1FAE5', fg: '#065F46', label: 'Aktif' },
+  used: { bg: '#E0E7FF', fg: '#3730A3', label: 'Sudah Dipakai' },
   paid: { bg: '#D1FAE5', fg: '#065F46', label: 'Lunas' },
   verified: { bg: '#D1FAE5', fg: '#065F46', label: 'Terverifikasi' },
   rejected: { bg: '#FEE2E2', fg: '#991B1B', label: 'Ditolak' },

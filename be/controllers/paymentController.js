@@ -2,6 +2,7 @@
 const db = require('../config/db');
 const snap = require('../config/midtrans');
 const crypto = require('crypto');
+const ticketService = require('../services/ticketService');
 
 const BASE = (process.env.BASE_URL || '').replace(/\/+$/, '');
 
@@ -273,6 +274,23 @@ const webhook = async (req, res) => {
     const payment = paymentResult.rows[0];
     const orderId = payment.order_id;
 
+    // Nominal notifikasi harus sama dengan total order. Signature saja
+    // sudah mengikat gross_amount, tetapi pengecekan ini mencegah
+    // notifikasi dengan nominal tidak wajar diproses.
+    if (
+      !Number.isFinite(Number(gross_amount)) ||
+      Math.abs(
+        Number(gross_amount) - Number(payment.total_price)
+      ) > 0.01
+    ) {
+      await client.query('ROLLBACK');
+
+      return res.status(400).json({
+        success: false,
+        message: 'Nominal pembayaran tidak sesuai',
+      });
+    }
+
     const successPayment =
       transaction_status === 'settlement' ||
       (
@@ -290,6 +308,14 @@ const webhook = async (req, res) => {
       successPayment &&
       payment.order_status === 'paid'
     ) {
+      // Order sudah lunas. Pastikan tiket tetap lengkap (mis. webhook
+      // pertama sempat terputus setelah order di-update) tanpa
+      // membuat tiket duplikat.
+      await ticketService.syncTicketsForPaidOrder(
+        client,
+        orderId
+      );
+
       await client.query('COMMIT');
 
       return res.json({
@@ -371,17 +397,11 @@ const webhook = async (req, res) => {
     }
 
     if (successPayment) {
-      await client.query(
-        `
-        UPDATE tickets
-        SET status = 'active'
-        WHERE order_item_id IN (
-          SELECT id
-          FROM order_items
-          WHERE order_id = $1
-        )
-        `,
-        [orderId]
+      // Buat kode tiket unik + QR untuk setiap tiket yang dibeli,
+      // lalu aktifkan. Idempoten: aman jika webhook terkirim ulang.
+      await ticketService.syncTicketsForPaidOrder(
+        client,
+        orderId
       );
     }
 
@@ -685,17 +705,11 @@ const verify = async (req, res) => {
         [orderId]
       );
 
-      await client.query(
-        `
-        UPDATE tickets
-        SET status = 'active'
-        WHERE order_item_id IN (
-          SELECT id
-          FROM order_items
-          WHERE order_id = $1
-        )
-        `,
-        [orderId]
+      // Verifikasi pembayaran manual (legacy) juga membuat tiket
+      // dan QR karena tiket tidak lagi dibuat saat order dibuat.
+      await ticketService.syncTicketsForPaidOrder(
+        client,
+        orderId
       );
     }
 

@@ -24,7 +24,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="orders"
         options={{
-          title: "Pesanan",
+          title: "Tiket",
           tabBarIcon: () => (
             <Text style={{ fontSize: 18 }}>🎟️</Text>
           ),

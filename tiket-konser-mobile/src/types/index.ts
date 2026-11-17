@@ -42,9 +42,40 @@ export interface EventItem {
 }
 
 export interface TicketInfo {
+  id?: number;
   ticket_code: string;
-  qr_code_url: string;
+  qr_code_url: string | null;
   status: string;
+  used_at?: string | null;
+  created_at?: string;
+}
+
+export interface MyTicket {
+  id: number;
+  ticket_code: string;
+  qr_code_url: string | null;
+  status: 'pending' | 'active' | 'used' | 'cancelled' | string;
+  used_at?: string | null;
+  created_at?: string;
+  order_item_id?: number;
+  quantity?: number;
+  unit_price?: number;
+  ticket_category_id?: number;
+  category_name?: string;
+  order_id?: number;
+  order_code?: string;
+  order_status?: string;
+  order_created_at?: string;
+  event_id?: number;
+  event_title?: string;
+  event_date?: string;
+  event_time?: string | null;
+  venue?: string;
+  poster_url?: string | null;
+  event_status?: string;
+  customer_id?: number;
+  customer_name?: string;
+  customer_email?: string;
 }
 
 export interface OrderItem {
@@ -77,6 +108,11 @@ export interface Order {
   created_at: string;
   customer_name?: string;
   event_title?: string;
+  event_poster_url?: string | null;
+  event_date?: string;
+  event_time?: string | null;
+  venue?: string;
+  event_status?: string;
   payment_status?: string;
   items?: OrderItem[];
   payment?: Payment | null;

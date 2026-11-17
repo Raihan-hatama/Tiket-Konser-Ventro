@@ -1,9 +1,12 @@
   import axios from "axios";
 
   // Gunakan NEXT_PUBLIC_API_URL dari .env.local (lihat .env.example).
-  // Fallback ke localhost untuk pengembangan di komputer yang sama.
+  // Jika tidak diatur, alamat lama dipertahankan agar setup yang sudah
+  // berjalan tidak berubah.
   const api = axios.create({
-    baseURL: "http://10.2.9.221:5000/api",
+    baseURL:
+      process.env.NEXT_PUBLIC_API_URL ||
+      "http://10.2.9.221:5000/api",
   });
 
   api.interceptors.request.use((config) => {
