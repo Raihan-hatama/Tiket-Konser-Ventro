@@ -102,9 +102,12 @@ app.use((err, req, res, next) => {
 // START SERVER
 // ============================================================
 
+// Tanpa argumen host, Node mengikat alamat "::" (dual-stack) sehingga
+// server dapat diakses lewat IPv4 (127.0.0.1 / IP LAN) maupun IPv6 (::1).
+// Sebelumnya host dipaksa '0.0.0.0' (IPv4 saja) sehingga browser yang
+// membuka "localhost" lewat ::1 mengalami connection timeout.
 app.listen(
   PORT,
-  '0.0.0.0',
   () => {
     console.log(
       `Server berjalan di http://localhost:${PORT}`

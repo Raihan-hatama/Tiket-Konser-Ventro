@@ -23,8 +23,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={poppins.className}>{children}</body>
+    // lang="id" memberi tahu browser bahwa konten sudah berbahasa
+    // Indonesia sehingga fitur auto-translate tidak menyisipkan atribut
+    // (_msthash dsb.) yang membuat hydration React gagal.
+    // translate="no" + suppressHydrationWarning menjadi pengaman tambahan
+    // jika ekstensi penerjemah tetap aktif.
+    <html lang="id" translate="no" suppressHydrationWarning>
+      <body className={poppins.className} suppressHydrationWarning>
+        {children}
+      </body>
     </html>
   );
 }
