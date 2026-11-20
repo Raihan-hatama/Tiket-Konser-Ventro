@@ -9,10 +9,11 @@ import {
   CreditCard,
   Ticket,
   User,
-  MapPin,
   CheckCircle,
   Clock,
   XCircle,
+  Copy,
+  Check,
 } from "lucide-react";
 
 interface TicketData {
@@ -56,6 +57,7 @@ export default function OrderDetailPage() {
 
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   const orderId = params.id;
 
@@ -63,9 +65,6 @@ export default function OrderDetailPage() {
     const loadOrder = async () => {
       try {
         const res = await api.get(`/orders/${orderId}`);
-
-        console.log("ORDER DETAIL:", res.data);
-
         setOrder(res.data.data);
       } catch (error: any) {
         console.error("GAGAL LOAD ORDER:", error);
@@ -77,8 +76,7 @@ export default function OrderDetailPage() {
         }
 
         alert(
-          error.response?.data?.message ||
-            "Gagal mengambil detail pesanan"
+          error.response?.data?.message || "Gagal mengambil detail pesanan"
         );
       } finally {
         setLoading(false);
@@ -90,22 +88,30 @@ export default function OrderDetailPage() {
     }
   }, [orderId, router]);
 
-  const formatRupiah = (value: number) => {
-    return new Intl.NumberFormat("id-ID", {
+  const formatRupiah = (value: number) =>
+    new Intl.NumberFormat("id-ID", {
       style: "currency",
       currency: "IDR",
       minimumFractionDigits: 0,
     }).format(value);
-  };
 
-  const formatDate = (date: string) => {
-    return new Date(date).toLocaleString("id-ID", {
+  const formatDate = (date: string) =>
+    new Date(date).toLocaleString("id-ID", {
       day: "2-digit",
       month: "long",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
     });
+
+  const copyCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopiedCode(code);
+      setTimeout(() => setCopiedCode(null), 1500);
+    } catch {
+      /* clipboard tidak tersedia */
+    }
   };
 
   const getStatusClass = (status: string) => {
@@ -114,14 +120,9 @@ export default function OrderDetailPage() {
       case "verified":
       case "success":
         return "status success";
-
-      case "pending":
-        return "status pending";
-
       case "cancelled":
       case "failed":
         return "status danger";
-
       default:
         return "status pending";
     }
@@ -132,22 +133,23 @@ export default function OrderDetailPage() {
       case "paid":
       case "verified":
       case "success":
-        return <CheckCircle size={15} />;
-
+        return <CheckCircle size={14} />;
       case "cancelled":
       case "failed":
-        return <XCircle size={15} />;
-
+        return <XCircle size={14} />;
       default:
-        return <Clock size={15} />;
+        return <Clock size={14} />;
     }
   };
 
   if (loading) {
     return (
       <div className="order-page">
-        <div className="loading">
-          Memuat detail pesanan...
+        <div className="skeleton-wrap" aria-busy="true" aria-label="Memuat">
+          <div className="sk sk-title" />
+          <div className="sk sk-hero" />
+          <div className="sk sk-block" />
+          <div className="sk sk-block" />
         </div>
 
         <style jsx>{styles}</style>
@@ -159,11 +161,12 @@ export default function OrderDetailPage() {
     return (
       <div className="order-page">
         <div className="empty">
-          <Ticket size={50} />
+          <Ticket size={44} />
           <h2>Pesanan tidak ditemukan</h2>
+          <p>Pesanan mungkin sudah dihapus atau tautannya salah.</p>
 
           <button onClick={() => router.push("/orders")}>
-            Kembali ke Orders
+            Kembali ke daftar pesanan
           </button>
         </div>
 
@@ -172,266 +175,247 @@ export default function OrderDetailPage() {
     );
   }
 
+  const totalTickets =
+    order.items?.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
+
   return (
     <div className="order-page">
-      {/* HEADER */}
-      <div className="page-header">
-        <div>
-          <button
-            className="back-button"
-            onClick={() => router.push("/orders")}
-          >
-            <ArrowLeft size={18} />
-            Kembali
-          </button>
+      <div className="container">
+        <button
+          className="back-button"
+          onClick={() => router.push("/orders")}
+        >
+          <ArrowLeft size={18} />
+          Kembali ke pesanan
+        </button>
 
-          <div className="eyebrow">
-            ORDER DETAIL
+        {/* HERO */}
+        <header className="hero">
+          <div className="hero-main">
+            <p className="hero-sub">Detail pesanan</p>
+            <h1>{order.order_code}</h1>
+            <p className="hero-event">{order.event_title}</p>
           </div>
 
-          <h1>Detail Pesanan</h1>
-
-          <p>
-            Informasi lengkap pesanan pelanggan.
-          </p>
-        </div>
-      </div>
-
-      {/* ORDER INFO */}
-      <div className="top-grid">
-        <div className="card">
-          <div className="card-title">
-            <Ticket size={20} />
-            Informasi Pesanan
+          <div className="hero-side">
+            <span className={getStatusClass(order.status)}>
+              {getStatusIcon(order.status)}
+              {order.status}
+            </span>
+            <strong className="hero-total">
+              {formatRupiah(order.total_price)}
+            </strong>
+            <span className="hero-meta">
+              {totalTickets} tiket · {formatDate(order.created_at)}
+            </span>
           </div>
+        </header>
 
-          <div className="info-list">
-            <div className="info-row">
-              <span>Kode Pesanan</span>
-              <strong>{order.order_code}</strong>
+        {/* INFO + CUSTOMER */}
+        <div className="top-grid">
+          <section className="card">
+            <h2 className="card-title">
+              <Ticket size={19} />
+              Informasi pesanan
+            </h2>
+
+            <div className="info-list">
+              <div className="info-row">
+                <span>Kode pesanan</span>
+                <strong className="mono">{order.order_code}</strong>
+              </div>
+
+              <div className="info-row">
+                <span>Event</span>
+                <strong>{order.event_title}</strong>
+              </div>
+
+              <div className="info-row">
+                <span>Tanggal pesanan</span>
+                <strong>{formatDate(order.created_at)}</strong>
+              </div>
+
+              <div className="info-row">
+                <span>Status pesanan</span>
+                <span className={getStatusClass(order.status)}>
+                  {getStatusIcon(order.status)}
+                  {order.status}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section className="card">
+            <h2 className="card-title">
+              <User size={19} />
+              Customer
+            </h2>
+
+            <div className="customer-box">
+              <div className="avatar">
+                {order.customer_name?.charAt(0).toUpperCase()}
+              </div>
+
+              <div>
+                <h3>{order.customer_name}</h3>
+                <p>Pemesan tiket</p>
+              </div>
             </div>
 
-            <div className="info-row">
-              <span>Event</span>
-              <strong>{order.event_title}</strong>
+            <div className="event-box">
+              <CalendarDays size={20} />
+
+              <div>
+                <span>Event</span>
+                <strong>{order.event_title}</strong>
+              </div>
             </div>
-
-            <div className="info-row">
-              <span>Tanggal Pesanan</span>
-              <strong>
-                {formatDate(order.created_at)}
-              </strong>
-            </div>
-
-            <div className="info-row">
-              <span>Total</span>
-              <strong className="price">
-                {formatRupiah(order.total_price)}
-              </strong>
-            </div>
-
-            <div className="info-row">
-              <span>Status Pesanan</span>
-
-              <span className={getStatusClass(order.status)}>
-                {getStatusIcon(order.status)}
-                {order.status}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* CUSTOMER */}
-        <div className="card">
-          <div className="card-title">
-            <User size={20} />
-            Informasi Customer
-          </div>
-
-          <div className="customer-box">
-            <div className="avatar">
-              {order.customer_name
-                ?.charAt(0)
-                .toUpperCase()}
-            </div>
-
-            <div>
-              <h3>{order.customer_name}</h3>
-              <p>Customer</p>
-            </div>
-          </div>
-
-          <div className="event-box">
-            <CalendarDays size={20} />
-
-            <div>
-              <span>Event</span>
-              <strong>{order.event_title}</strong>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ITEMS */}
-      <div className="card tickets-card">
-        <div className="card-title">
-          <Ticket size={20} />
-          Tiket Pesanan
+          </section>
         </div>
 
-        <div className="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>Kategori</th>
-                <th>Harga</th>
-                <th>Jumlah</th>
-                <th>Subtotal</th>
-              </tr>
-            </thead>
+        {/* ITEMS */}
+        <section className="card">
+          <h2 className="card-title">
+            <Ticket size={19} />
+            Rincian pesanan
+          </h2>
 
-            <tbody>
-              {order.items?.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <strong>{item.category_name}</strong>
-                  </td>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Kategori</th>
+                  <th className="num">Harga</th>
+                  <th className="num">Jumlah</th>
+                  <th className="num">Subtotal</th>
+                </tr>
+              </thead>
 
-                  <td>
-                    {formatRupiah(item.unit_price)}
-                  </td>
+              <tbody>
+                {order.items?.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <strong>{item.category_name}</strong>
+                    </td>
+                    <td className="num">{formatRupiah(item.unit_price)}</td>
+                    <td className="num">{item.quantity}</td>
+                    <td className="num">
+                      <strong>
+                        {formatRupiah(item.unit_price * item.quantity)}
+                      </strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
 
-                  <td>
-                    {item.quantity}
-                  </td>
-
-                  <td>
-                    <strong>
-                      {formatRupiah(
-                        item.unit_price *
-                          item.quantity
-                      )}
-                    </strong>
+              <tfoot>
+                <tr>
+                  <td colSpan={3}>Total</td>
+                  <td className="num total-cell">
+                    {formatRupiah(order.total_price)}
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+              </tfoot>
+            </table>
+          </div>
+        </section>
 
-      {/* INDIVIDUAL TICKETS */}
-      <div className="card">
-        <div className="card-title">
-          <Ticket size={20} />
-          Daftar Tiket
-        </div>
+        {/* INDIVIDUAL TICKETS */}
+        <section className="card">
+          <h2 className="card-title">
+            <Ticket size={19} />
+            Daftar tiket
+          </h2>
 
-        <div className="ticket-grid">
-          {order.items?.flatMap((item) =>
-            item.tickets?.map((ticket) => (
-              <div
-                className="ticket-card"
-                key={ticket.ticket_code}
-              >
-                <div className="ticket-left">
-                  <span className="ticket-label">
-                    TICKET
-                  </span>
+          <div className="ticket-grid">
+            {order.items?.flatMap((item) =>
+              (item.tickets ?? []).map((ticket) => (
+                <article className="ticket-card" key={ticket.ticket_code}>
+                  <div className="ticket-left">
+                    <h3>{item.category_name}</h3>
 
-                  <h3>{item.category_name}</h3>
+                    <button
+                      type="button"
+                      className="code-chip"
+                      onClick={() => copyCode(ticket.ticket_code)}
+                      title="Salin kode tiket"
+                    >
+                      <span>{ticket.ticket_code}</span>
+                      {copiedCode === ticket.ticket_code ? (
+                        <Check size={13} />
+                      ) : (
+                        <Copy size={13} />
+                      )}
+                    </button>
 
-                  <p>
-                    {ticket.ticket_code}
-                  </p>
+                    <span className={getStatusClass(ticket.status)}>
+                      {getStatusIcon(ticket.status)}
+                      {ticket.status}
+                    </span>
+                  </div>
 
-                  <span
-                    className={getStatusClass(
-                      ticket.status
+                  <div className="qr">
+                    {ticket.qr_code_url ? (
+                      <img src={ticket.qr_code_url} alt={ticket.ticket_code} />
+                    ) : (
+                      <div className="no-qr">QR</div>
                     )}
-                  >
-                    {getStatusIcon(ticket.status)}
-                    {ticket.status}
-                  </span>
-                </div>
-
-                <div className="qr">
-                  {ticket.qr_code_url ? (
-                    <img
-                      src={ticket.qr_code_url}
-                      alt={ticket.ticket_code}
-                    />
-                  ) : (
-                    <div className="no-qr">
-                      QR
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* PAYMENT */}
-      <div className="card">
-        <div className="card-title">
-          <CreditCard size={20} />
-          Informasi Pembayaran
-        </div>
-
-        {order.payment ? (
-          <div className="payment-box">
-            <div className="info-row">
-              <span>Metode Pembayaran</span>
-
-              <strong>
-                {order.payment.payment_method}
-              </strong>
-            </div>
-
-            <div className="info-row">
-              <span>Jumlah</span>
-
-              <strong className="price">
-                {formatRupiah(
-                  order.payment.amount
-                )}
-              </strong>
-            </div>
-
-            <div className="info-row">
-              <span>Status</span>
-
-              <span
-                className={getStatusClass(
-                  order.payment.status
-                )}
-              >
-                {getStatusIcon(
-                  order.payment.status
-                )}
-
-                {order.payment.status}
-              </span>
-            </div>
-
-            {order.payment.proof_url && (
-              <div className="proof">
-                <span>Bukti Pembayaran</span>
-
-                <img
-                  src={order.payment.proof_url}
-                  alt="Bukti pembayaran"
-                />
-              </div>
+                  </div>
+                </article>
+              ))
             )}
           </div>
-        ) : (
-          <div className="no-payment">
-            Belum ada data pembayaran.
-          </div>
-        )}
+        </section>
+
+        {/* PAYMENT */}
+        <section className="card">
+          <h2 className="card-title">
+            <CreditCard size={19} />
+            Pembayaran
+          </h2>
+
+          {order.payment ? (
+            <div className="payment-box">
+              <div className="info-row">
+                <span>Metode pembayaran</span>
+                <strong>{order.payment.payment_method}</strong>
+              </div>
+
+              <div className="info-row">
+                <span>Jumlah</span>
+                <strong className="price">
+                  {formatRupiah(order.payment.amount)}
+                </strong>
+              </div>
+
+              <div className="info-row">
+                <span>Status</span>
+                <span className={getStatusClass(order.payment.status)}>
+                  {getStatusIcon(order.payment.status)}
+                  {order.payment.status}
+                </span>
+              </div>
+
+              {order.payment.proof_url && (
+                <div className="proof">
+                  <span>Bukti pembayaran</span>
+                  <a
+                    href={order.payment.proof_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <img
+                      src={order.payment.proof_url}
+                      alt="Bukti pembayaran"
+                    />
+                  </a>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="no-payment">Belum ada data pembayaran.</div>
+          )}
+        </section>
       </div>
 
       <style jsx>{styles}</style>
@@ -442,48 +426,98 @@ export default function OrderDetailPage() {
 const styles = `
   .order-page {
     min-height: 100vh;
-    background: #f4f7fe;
-    padding: 34px;
-    color: #0b0f19;
+    background: #f3f6fc;
+    padding: 32px 24px 56px;
+    color: #111827;
   }
 
-  .page-header {
-    margin-bottom: 28px;
+  .container {
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+
+  button:focus-visible,
+  a:focus-visible {
+    outline: 3px solid #6f8fd8;
+    outline-offset: 2px;
   }
 
   .back-button {
     border: none;
     background: transparent;
-    color: #1d4ed8;
-    display: flex;
+    color: #0a1e4d;
+    display: inline-flex;
     align-items: center;
     gap: 7px;
     font-weight: 600;
+    font-size: 14px;
     cursor: pointer;
-    margin-bottom: 24px;
-    padding: 0;
+    margin-bottom: 18px;
+    padding: 6px 10px 6px 0;
+    border-radius: 8px;
+    transition: gap .15s ease;
   }
 
-  .eyebrow {
-    color: #1d4ed8;
-    font-family: monospace;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: .2em;
+  .back-button:hover {
+    gap: 10px;
   }
 
-  h1 {
-    margin: 7px 0;
-    font-size: 34px;
-    font-weight: 800;
-    text-transform: uppercase;
+  /* HERO */
+  .hero {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 24px;
+    padding: 30px 32px;
+    margin-bottom: 20px;
+    border-radius: 20px;
+    color: white;
+    background: linear-gradient(135deg, #0a1e4d 0%, #0c2559 100%);
+    box-shadow: 0 14px 34px rgba(10, 30, 77, .28);
   }
 
-  .page-header p {
+  .hero-sub {
+    margin: 0 0 6px;
+    font-size: 13px;
+    color: #bfd1ff;
+  }
+
+  .hero h1 {
     margin: 0;
-    color: #64748b;
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: -.01em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    word-break: break-all;
   }
 
+  .hero-event {
+    margin: 8px 0 0;
+    color: #dbe6ff;
+    font-size: 15px;
+  }
+
+  .hero-side {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .hero-total {
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1.1;
+  }
+
+  .hero-meta {
+    font-size: 12.5px;
+    color: #bfd1ff;
+  }
+
+  /* LAYOUT */
   .top-grid {
     display: grid;
     grid-template-columns: 1.4fr 1fr;
@@ -491,23 +525,27 @@ const styles = `
     margin-bottom: 20px;
   }
 
+  .top-grid .card {
+    margin-bottom: 0;
+  }
+
   .card {
     background: white;
-    border: 1px solid #dbe4f5;
+    border: 1px solid #e0e7f5;
     border-radius: 16px;
     padding: 24px;
     margin-bottom: 20px;
-    box-shadow: 0 5px 18px rgba(15, 45, 100, .05);
+    box-shadow: 0 1px 2px rgba(15, 45, 100, .04), 0 8px 24px rgba(15, 45, 100, .05);
   }
 
   .card-title {
     display: flex;
     align-items: center;
     gap: 10px;
-    color: #143fa6;
+    color: #0a1e4d;
     font-size: 17px;
     font-weight: 700;
-    margin-bottom: 22px;
+    margin: 0 0 18px;
   }
 
   .info-list {
@@ -521,14 +559,14 @@ const styles = `
     justify-content: space-between;
     gap: 20px;
     padding: 14px 0;
-    border-bottom: 1px solid #edf1f7;
+    border-bottom: 1px solid #eef2f8;
   }
 
   .info-row:last-child {
     border-bottom: none;
   }
 
-  .info-row span:first-child {
+  .info-row > span:first-child {
     color: #64748b;
     font-size: 14px;
   }
@@ -537,17 +575,23 @@ const styles = `
     text-align: right;
   }
 
-  .price {
-    color: #1d4ed8;
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 14px;
   }
 
+  .price {
+    color: #0a1e4d;
+  }
+
+  /* STATUS */
   .status {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
     width: fit-content;
-    padding: 6px 11px;
+    padding: 5px 11px;
     border-radius: 999px;
     font-size: 12px;
     font-weight: 700;
@@ -569,25 +613,31 @@ const styles = `
     background: #fee2e2;
   }
 
+  .hero .status {
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, .25);
+  }
+
+  /* CUSTOMER */
   .customer-box {
     display: flex;
     align-items: center;
     gap: 15px;
     padding-bottom: 20px;
-    border-bottom: 1px solid #edf1f7;
+    border-bottom: 1px solid #eef2f8;
   }
 
   .avatar {
     width: 50px;
     height: 50px;
-    border-radius: 12px;
-    background: #1d4ed8;
+    border-radius: 50%;
+    background: #0a1e4d;
     color: white;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 20px;
     font-weight: 800;
+    flex-shrink: 0;
   }
 
   .customer-box h3 {
@@ -606,6 +656,10 @@ const styles = `
     align-items: center;
     gap: 12px;
     margin-top: 20px;
+    padding: 14px;
+    border-radius: 12px;
+    background: #f3f6fc;
+    color: #0a1e4d;
   }
 
   .event-box span {
@@ -617,8 +671,10 @@ const styles = `
 
   .event-box strong {
     display: block;
+    color: #111827;
   }
 
+  /* TABLE */
   .table-wrapper {
     overflow-x: auto;
   }
@@ -629,27 +685,54 @@ const styles = `
   }
 
   th {
-    background: #1d4ed8;
-    color: white;
+    background: #eef3ff;
+    color: #0a1e4d;
     text-align: left;
-    padding: 14px 16px;
+    padding: 12px 16px;
     font-size: 13px;
+    font-weight: 700;
   }
 
   th:first-child {
-    border-radius: 9px 0 0 9px;
+    border-radius: 10px 0 0 10px;
   }
 
   th:last-child {
-    border-radius: 0 9px 9px 0;
+    border-radius: 0 10px 10px 0;
   }
 
   td {
     padding: 16px;
-    border-bottom: 1px solid #edf1f7;
+    border-bottom: 1px solid #eef2f8;
     font-size: 14px;
   }
 
+  tbody tr:hover td {
+    background: #fafcff;
+  }
+
+  .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  tfoot td {
+    border-bottom: none;
+    padding-top: 18px;
+    font-weight: 700;
+  }
+
+  tfoot td:first-child {
+    text-align: right;
+    color: #64748b;
+  }
+
+  .total-cell {
+    color: #0a1e4d;
+    font-size: 18px;
+  }
+
+  /* TICKETS */
   .ticket-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
@@ -657,41 +740,74 @@ const styles = `
   }
 
   .ticket-card {
+    position: relative;
     display: flex;
     justify-content: space-between;
-    gap: 15px;
+    align-items: center;
+    gap: 18px;
     border: 1px solid #dbe4f5;
     border-radius: 14px;
-    padding: 18px;
+    padding: 18px 18px 18px 20px;
     background: #f8faff;
+    overflow: hidden;
   }
 
-  .ticket-label {
-    color: #1d4ed8;
-    font-family: monospace;
-    font-size: 10px;
-    letter-spacing: .15em;
-    font-weight: 700;
+  .ticket-card::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 5px;
+    background: #0a1e4d;
+  }
+
+  .ticket-left {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    min-width: 0;
   }
 
   .ticket-card h3 {
-    margin: 7px 0;
+    margin: 0;
     font-size: 17px;
   }
 
-  .ticket-card p {
-    font-family: monospace;
+  .code-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    padding: 5px 10px;
+    border: 1px dashed #aebfe3;
+    border-radius: 8px;
+    background: white;
+    color: #475569;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 12px;
-    color: #64748b;
-    margin-bottom: 12px;
+    cursor: pointer;
+  }
+
+  .code-chip span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .code-chip:hover {
+    border-color: #0a1e4d;
+    color: #0a1e4d;
   }
 
   .qr {
-    width: 110px;
-    height: 110px;
+    width: 108px;
+    height: 108px;
     background: white;
     padding: 6px;
     border-radius: 10px;
+    border: 1px solid #e0e7f5;
     flex-shrink: 0;
   }
 
@@ -708,8 +824,10 @@ const styles = `
     align-items: center;
     justify-content: center;
     color: #94a3b8;
+    font-weight: 700;
   }
 
+  /* PAYMENT */
   .payment-box {
     max-width: 700px;
   }
@@ -726,9 +844,12 @@ const styles = `
 
   .proof img {
     max-width: 350px;
+    width: 100%;
     max-height: 400px;
+    object-fit: contain;
     border-radius: 10px;
     border: 1px solid #dbe4f5;
+    background: #f8fafc;
   }
 
   .no-payment {
@@ -738,12 +859,28 @@ const styles = `
     color: #64748b;
   }
 
-  .loading {
-    min-height: 70vh;
+  /* LOADING + EMPTY */
+  .skeleton-wrap {
+    max-width: 1080px;
+    margin: 0 auto;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #64748b;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .sk {
+    border-radius: 16px;
+    background: linear-gradient(90deg, #e6ecf7 25%, #f1f5fb 50%, #e6ecf7 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite linear;
+  }
+
+  .sk-title { height: 20px; width: 140px; }
+  .sk-hero { height: 130px; }
+  .sk-block { height: 180px; }
+
+  @keyframes shimmer {
+    to { background-position: -200% 0; }
   }
 
   .empty {
@@ -753,26 +890,56 @@ const styles = `
     align-items: center;
     justify-content: center;
     color: #64748b;
-    gap: 12px;
+    gap: 10px;
+    text-align: center;
   }
 
   .empty h2 {
-    color: #0b0f19;
+    margin: 6px 0 0;
+    color: #111827;
+  }
+
+  .empty p {
+    margin: 0 0 8px;
   }
 
   .empty button {
     border: none;
-    background: #1d4ed8;
+    background: #0a1e4d;
     color: white;
     padding: 11px 18px;
-    border-radius: 8px;
+    border-radius: 10px;
     cursor: pointer;
     font-weight: 600;
   }
 
+  .empty button:hover {
+    background: #0a1e4d;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sk { animation: none; }
+    .back-button { transition: none; }
+  }
+
   @media (max-width: 800px) {
     .order-page {
-      padding: 20px;
+      padding: 20px 16px 40px;
+    }
+
+    .hero {
+      flex-direction: column;
+      align-items: flex-start;
+      padding: 24px;
+    }
+
+    .hero-side {
+      align-items: flex-start;
+      text-align: left;
+    }
+
+    .hero h1 {
+      font-size: 26px;
     }
 
     .top-grid {
