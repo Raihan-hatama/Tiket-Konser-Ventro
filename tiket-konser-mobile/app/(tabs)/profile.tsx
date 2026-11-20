@@ -1,30 +1,72 @@
-import React from "react";
+import React, { useCallback, useState } from "react";
 import { Redirect } from "expo-router";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useAuth } from "@/context/AuthContext";
 import PrimaryButton from "@/components/PrimaryButton";
 import LoadingScreen from "@/components/LoadingScreen";
+import { formatDate } from "@/utils/format";
+
+type FeatherName = React.ComponentProps<typeof Feather>["name"];
 
 const COLORS = {
-  blue900: '#0A1E4D',
-  blue700: '#143FA6',
-  blue600: '#1D4ED8',
-  blue100: '#E7EDFC',
-  blue50: '#F4F7FE',
-  line: '#D6E0F7',
-  ink: '#0B0F19',
-  muted: '#6B7690',
+  accent: "#4F46E5",
+  accentSoft: "#EEF2FF",
+  screen: "#F9FAFB",
+  card: "#FFFFFF",
+  ink: "#111827",
+  muted: "#6B7280",
+  faint: "#9CA3AF",
+  line: "#F3F4F6",
 };
 
-export default function ProfileScreen() {
-  const {
-    user,
-    logout,
-    isAuthenticated,
-    isLoading,
-  } = useAuth();
+interface InfoRowProps {
+  icon: FeatherName;
+  label: string;
+  value: string;
+  isLast?: boolean;
+}
 
+const InfoRow = ({ icon, label, value, isLast }: InfoRowProps) => (
+  <>
+    <View style={styles.infoRow}>
+      <View style={styles.infoIcon}>
+        <Feather name={icon} size={15} color={COLORS.accent} />
+      </View>
+
+      <View style={styles.infoText}>
+        <Text style={styles.infoLabel}>{label}</Text>
+        <Text style={styles.infoValue} numberOfLines={1}>
+          {value}
+        </Text>
+      </View>
+    </View>
+
+    {!isLast && <View style={styles.divider} />}
+  </>
+);
+
+export default function ProfileScreen() {
+  const { user, logout, isAuthenticated, isLoading, refreshUser } = useAuth();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+
+    try {
+      await refreshUser();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshUser]);
+
+  // Guard harus setelah semua hook supaya urutan hook tetap stabil.
   if (isLoading) {
     return <LoadingScreen />;
   }
@@ -33,176 +75,250 @@ export default function ProfileScreen() {
     return <Redirect href="/(auth)/login" />;
   }
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === "admin";
+  const initial = user?.name?.trim().charAt(0).toUpperCase() || "?";
+  const memberSince = user?.created_at ? formatDate(user.created_at) : null;
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 40 }}>
-      {/* ---- panel header (biru, senada dengan login) ---- */}
-      <View style={styles.headerPanel}>
-        <Text style={styles.headerEyebrow}>AKUN SAYA</Text>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.content}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          colors={[COLORS.accent]}
+          tintColor={COLORS.accent}
+        />
+      }
+    >
+      <View style={styles.header}>
         <Text style={styles.headerTitle}>Profil</Text>
+        <Text style={styles.headerSubtitle}>
+          Informasi akun dan sesi kamu di VENTRO.
+        </Text>
+      </View>
 
+      {/* ---- identitas ---- */}
+      <View style={styles.identityCard}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {user?.name?.charAt(0).toUpperCase() ?? '?'}
-          </Text>
+          <Text style={styles.avatarText}>{initial}</Text>
         </View>
 
-        <Text style={styles.name}>{user?.name}</Text>
+        <View style={styles.identityInfo}>
+          <Text style={styles.name} numberOfLines={1}>
+            {user?.name || "-"}
+          </Text>
 
-        <View style={styles.roleBadge}>
-          <Feather
-            name={isAdmin ? 'shield' : 'user'}
-            size={12}
-            color={COLORS.blue700}
-          />
-          <Text style={styles.roleText}>{isAdmin ? 'Admin' : 'Pelanggan'}</Text>
+          <Text style={styles.email} numberOfLines={1}>
+            {user?.email || "-"}
+          </Text>
+
+          <View
+            style={[
+              styles.roleBadge,
+              isAdmin ? styles.roleBadgeAdmin : styles.roleBadgeCustomer,
+            ]}
+          >
+            <Feather
+              name={isAdmin ? "shield" : "user"}
+              size={11}
+              color={isAdmin ? "#4338CA" : "#374151"}
+            />
+            <Text
+              style={[
+                styles.roleText,
+                { color: isAdmin ? "#4338CA" : "#374151" },
+              ]}
+            >
+              {isAdmin ? "Admin" : "Pelanggan"}
+            </Text>
+          </View>
         </View>
       </View>
 
-      {/* ---- kartu detail info ---- */}
-      <View style={styles.infoCard}>
-        <View style={styles.infoRow}>
-          <View style={styles.infoIcon}>
-            <Feather name="mail" size={15} color={COLORS.blue700} />
-          </View>
-          <View style={styles.infoText}>
-            <Text style={styles.infoLabel}>EMAIL</Text>
-            <Text style={styles.infoValue}>{user?.email}</Text>
-          </View>
-        </View>
+      {/* ---- detail akun ---- */}
+      <Text style={styles.sectionLabel}>Informasi Akun</Text>
+
+      <View style={styles.card}>
+        <InfoRow icon="mail" label="EMAIL" value={user?.email || "-"} />
 
         {!!user?.phone && (
-          <>
-            <View style={styles.divider} />
-            <View style={styles.infoRow}>
-              <View style={styles.infoIcon}>
-                <Feather name="phone" size={15} color={COLORS.blue700} />
-              </View>
-              <View style={styles.infoText}>
-                <Text style={styles.infoLabel}>NOMOR TELEPON</Text>
-                <Text style={styles.infoValue}>{user.phone}</Text>
-              </View>
-            </View>
-          </>
+          <InfoRow
+            icon="phone"
+            label="NOMOR TELEPON"
+            value={user.phone}
+            isLast={!memberSince}
+          />
+        )}
+
+        {memberSince && (
+          <InfoRow
+            icon="calendar"
+            label="BERGABUNG SEJAK"
+            value={memberSince}
+            isLast
+          />
         )}
       </View>
 
-      {/* Logging out flips isAuthenticated to false, which makes the
-          (tabs) layout redirect to /(auth)/login automatically. */}
-      <View style={styles.logoutWrap}>
+      {/* ---- sesi ---- */}
+      <Text style={styles.sectionLabel}>Sesi</Text>
+
+      <View style={styles.sessionCard}>
+        <View style={styles.sessionRow}>
+          <View style={styles.infoIcon}>
+            <Feather name="lock" size={15} color={COLORS.accent} />
+          </View>
+
+          <Text style={styles.sessionText}>
+            Kamu masuk sebagai{" "}
+            <Text style={styles.sessionStrong}>
+              {isAdmin ? "Admin" : "Pelanggan"}
+            </Text>
+            . Keluar akan mengakhiri sesi di perangkat ini.
+          </Text>
+        </View>
+
         <PrimaryButton
           title="Keluar"
           variant="outline"
           onPress={logout}
+          style={styles.logoutButton}
         />
       </View>
+
+      <Text style={styles.footer}>VENTRO · Tiket Konser</Text>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: COLORS.blue50 },
+  screen: { flex: 1, backgroundColor: COLORS.screen },
+  content: { paddingBottom: 40 },
 
-  headerPanel: {
-    backgroundColor: COLORS.blue900,
-    alignItems: 'center',
-    paddingTop: 40,
-    paddingBottom: 32,
-    paddingHorizontal: 24,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
-  },
-  headerEyebrow: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 2,
-  },
-  headerTitle: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 22,
-    letterSpacing: 0.3,
-    marginTop: 4,
+  header: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 8 },
+  headerTitle: { fontSize: 24, fontWeight: "800", color: COLORS.ink },
+  headerSubtitle: { fontSize: 13, color: COLORS.muted, marginTop: 4 },
+
+  identityCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: COLORS.card,
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 18,
+    borderRadius: 16,
+    shadowColor: "#111827",
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   avatar: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: COLORS.blue600,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 22,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.25)',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.accent,
   },
-  avatarText: { color: '#fff', fontSize: 30, fontWeight: '800' },
-  name: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-    marginTop: 14,
-  },
+  avatarText: { color: "#FFFFFF", fontSize: 26, fontWeight: "800" },
+  identityInfo: { flex: 1 },
+  name: { fontSize: 18, fontWeight: "800", color: COLORS.ink },
+  email: { fontSize: 13, color: COLORS.muted, marginTop: 2 },
   roleBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 999,
-    marginTop: 10,
+    marginTop: 8,
   },
-  roleText: { color: COLORS.blue700, fontWeight: '700', fontSize: 12 },
+  roleBadgeAdmin: { backgroundColor: COLORS.accentSoft },
+  roleBadgeCustomer: { backgroundColor: "#F3F4F6" },
+  roleText: { fontSize: 11, fontWeight: "700", letterSpacing: 0.3 },
 
-  infoCard: {
-    backgroundColor: '#fff',
+  sectionLabel: {
     marginHorizontal: 20,
-    marginTop: -20,
+    marginTop: 22,
+    marginBottom: 8,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+    color: COLORS.faint,
+  },
+
+  card: {
+    backgroundColor: COLORS.card,
+    marginHorizontal: 16,
     borderRadius: 16,
-    paddingVertical: 6,
-    paddingHorizontal: 18,
-    shadowColor: '#0A1E4D',
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
+    paddingHorizontal: 16,
+    paddingVertical: 2,
+    shadowColor: "#111827",
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 14,
   },
   infoIcon: {
-    width: 34,
-    height: 34,
+    width: 36,
+    height: 36,
     borderRadius: 10,
-    backgroundColor: COLORS.blue100,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.accentSoft,
   },
   infoText: { flex: 1 },
   infoLabel: {
-    color: COLORS.muted,
     fontSize: 10.5,
+    fontWeight: "600",
     letterSpacing: 1,
-    fontWeight: '600',
+    color: COLORS.faint,
   },
   infoValue: {
-    color: COLORS.ink,
     fontSize: 14.5,
-    fontWeight: '600',
-    marginTop: 3,
+    fontWeight: "600",
+    color: COLORS.ink,
+    marginTop: 2,
   },
-  divider: {
-    height: 1,
-    backgroundColor: COLORS.line,
-  },
+  divider: { height: 1, backgroundColor: COLORS.line },
 
-  logoutWrap: {
-    marginHorizontal: 20,
-    marginTop: 28,
+  sessionCard: {
+    backgroundColor: COLORS.card,
+    marginHorizontal: 16,
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: "#111827",
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  sessionRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  sessionText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+    color: COLORS.muted,
+  },
+  sessionStrong: { color: COLORS.ink, fontWeight: "700" },
+  logoutButton: { marginTop: 14 },
+
+  footer: {
+    marginTop: 26,
+    textAlign: "center",
+    fontSize: 11.5,
+    letterSpacing: 0.5,
+    color: COLORS.faint,
   },
 });
