@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -76,6 +77,7 @@ export default function ArtistsPage() {
           margin: 0 -32px 0;
           overflow: hidden;
         }
+
         .cdx-truss-dot {
           width: 5px;
           height: 5px;
@@ -84,10 +86,12 @@ export default function ArtistsPage() {
           opacity: 0.35;
           flex-shrink: 0;
         }
+
         .cdx-truss-dot.is-lit {
           background: var(--white);
           opacity: 0.9;
         }
+
         .cdx-truss-status {
           margin-left: auto;
           display: flex;
@@ -98,6 +102,7 @@ export default function ArtistsPage() {
           background: rgba(255,255,255,0.08);
           flex-shrink: 0;
         }
+
         .cdx-pulse {
           width: 7px;
           height: 7px;
@@ -105,10 +110,12 @@ export default function ArtistsPage() {
           background: #4ADE80;
           animation: cdx-blink 2.2s ease-in-out infinite;
         }
+
         @keyframes cdx-blink {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.25; }
         }
+
         .cdx-truss-status span {
           font-family: 'JetBrains Mono', monospace;
           font-size: 11px;
@@ -124,6 +131,7 @@ export default function ArtistsPage() {
           padding: 36px 32px 24px;
           flex-wrap: wrap;
         }
+
         .cdx-eyebrow {
           font-family: 'JetBrains Mono', monospace;
           font-size: 11px;
@@ -132,6 +140,7 @@ export default function ArtistsPage() {
           color: var(--blue-700);
           font-weight: 700;
         }
+
         .cdx-title {
           font-family: 'Oswald', sans-serif;
           font-weight: 700;
@@ -141,6 +150,7 @@ export default function ArtistsPage() {
           color: var(--ink);
           margin-top: 6px;
         }
+
         .cdx-subtitle {
           color: #4B5670;
           margin-top: 6px;
@@ -160,6 +170,7 @@ export default function ArtistsPage() {
           transition: background 0.15s ease, transform 0.15s ease;
           white-space: nowrap;
         }
+
         .cdx-add-btn:hover {
           background: var(--blue-700);
           transform: translateY(-1px);
@@ -182,10 +193,12 @@ export default function ArtistsPage() {
           border-bottom: 1px solid var(--line);
           background: var(--blue-50);
         }
+
         .cdx-search-bar svg {
           color: var(--blue-600);
           flex-shrink: 0;
         }
+
         .cdx-search-bar input {
           border: none;
           background: transparent;
@@ -194,12 +207,14 @@ export default function ArtistsPage() {
           font-size: 14px;
           color: var(--ink);
         }
+
         .cdx-search-bar input::placeholder {
           color: #8A93AD;
           font-family: 'JetBrains Mono', monospace;
           font-size: 13px;
           letter-spacing: 0.02em;
         }
+
         .cdx-search-count {
           font-family: 'JetBrains Mono', monospace;
           font-size: 11.5px;
@@ -227,6 +242,7 @@ export default function ArtistsPage() {
             className={`cdx-truss-dot ${i % 4 === 0 ? "is-lit" : ""}`}
           />
         ))}
+
         <div className="cdx-truss-status">
           <span className="cdx-pulse" />
           <span>SEMUA SISTEM AKTIF</span>
@@ -235,9 +251,17 @@ export default function ArtistsPage() {
 
       <div className="cdx-header-row">
         <div>
-          <p className="cdx-eyebrow">Panel Admin — Manajemen Artis</p>
-          <h1 className="cdx-title">Artists</h1>
-          <p className="cdx-subtitle">Kelola seluruh data artis</p>
+          <p className="cdx-eyebrow">
+            Panel Admin — Manajemen Artis
+          </p>
+
+          <h1 className="cdx-title">
+            Artists
+          </h1>
+
+          <p className="cdx-subtitle">
+            Kelola seluruh data artis
+          </p>
         </div>
 
         <Link href="/artists/create" className="cdx-add-btn">
@@ -249,6 +273,7 @@ export default function ArtistsPage() {
       <div className="cdx-panel">
         <div className="cdx-search-bar">
           <Search size={16} />
+
           <input
             type="text"
             placeholder="Cari berdasarkan nama artis atau bio..."
@@ -258,11 +283,17 @@ export default function ArtistsPage() {
               setPage(1);
             }}
           />
-          <span className="cdx-search-count">{filtered.length} HASIL</span>
+
+          <span className="cdx-search-count">
+            {filtered.length} HASIL
+          </span>
         </div>
 
         <div className="cdx-table-wrap">
-          <ArtistTable artists={currentData} onDelete={remove} />
+          <ArtistTable
+            artists={currentData}
+            onDelete={remove}
+          />
         </div>
 
         <div className="cdx-pagination-wrap">
